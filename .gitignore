@@ -1,0 +1,14 @@
+# 실제 데이터와 실제 데이터가 들어간 화면은 절대 올리지 않는다
+data/data.real.json
+dist/index.real.html
+*.real.*
+# 실제 팀 이름과 안건 문장이 들어 있는 테스트 (내 PC에서만 돌린다)
+tests/test_real.py
+# 비밀 값
+.env
+.clasprc.json
+secrets/
+# 실행 부산물
+__pycache__/
+*.png
+node_modules/

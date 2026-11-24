@@ -1,0 +1,27 @@
+#!/bin/sh
+# 커밋 전에 공개해도 되는 파일인지 점검한다 (tools/check_public.py).
+# 설치: git config core.hooksPath .githooks
+# 실제 데이터(data/data.real.json)가 없는 PC에서는 점검할 수 없으므로 커밋을 막는다.
+cd "$(git rev-parse --show-toplevel)" || exit 1
+if [ ! -f data/data.real.json ]; then
+  echo "[pre-commit] data/data.real.json이 없어 공개 점검을 할 수 없습니다. 커밋을 멈춥니다." >&2
+  exit 1
+fi
+for p in python python3 py "$LOCALAPPDATA"/Programs/Python/Python3*/python.exe; do
+  if "$p" -c "import sys" >/dev/null 2>&1; then PY="$p"; break; fi
+done
+if [ -z "$PY" ]; then
+  echo "[pre-commit] Python을 찾지 못했습니다. 커밋을 멈춥니다." >&2
+  exit 1
+fi
+# 커밋 금지 파일이 스테이지에 올라왔는지 따로 한 번 더 본다 (git add -f 방지)
+bad=$(git diff --cached --name-only | grep -E 'data\.real|\.real\.|test_real\.py' || true)
+if [ -n "$bad" ]; then
+  echo "[pre-commit] 커밋 금지 파일이 포함되어 있습니다:" >&2
+  echo "$bad" >&2
+  exit 1
+fi
+PYTHONIOENCODING=utf-8 "$PY" tools/check_public.py || {
+  echo "[pre-commit] 공개 점검 실패. 위 목록을 고친 뒤 다시 커밋하세요." >&2
+  exit 1
+}

@@ -1,0 +1,73 @@
+# 예시 데이터 화면을 깃허브 페이지로 배포한다.
+# 순서: 커밋 금지 파일 확인 -> build.py sample -> 커밋된 dist/index.html과 같은지 확인 -> 스모크, 시나리오 테스트 -> 배포
+# check_public.py는 실제 데이터가 있어야 돌아가므로 여기서는 돌리지 않는다. 커밋 전 훅(.githooks/pre-commit)에서 돌린다.
+# 그래서 "커밋된 dist/index.html과 새로 빌드한 결과가 같다"를 확인해, 내 PC에서 점검을 통과한 화면만 나가게 한다.
+name: pages
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 커밋 금지 파일이 없는지 확인
+        run: |
+          if git ls-files | grep -E 'data\.real|\.real\.|test_real\.py'; then
+            echo "커밋 금지 파일이 저장소에 있습니다"; exit 1
+          fi
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: 도구 설치
+        run: |
+          pip install playwright==1.65.2
+          sudo apt-get update -q && sudo apt-get install -y -q fonts-noto-cjk
+
+      - name: 예시 화면 빌드, 커밋된 파일과 대조
+        run: |
+          tr -d '\r' < dist/index.html > /tmp/committed.html
+          python build.py sample
+          tr -d '\r' < dist/index.html > /tmp/built.html
+          cmp /tmp/committed.html /tmp/built.html || { echo "dist/index.html이 원본과 다릅니다. 내 PC에서 python build.py sample 후 다시 커밋하세요"; exit 1; }
+
+      - name: 스모크 테스트
+        run: python tests/smoke_sample.py
+
+      - name: 시나리오 테스트
+        run: python tests/test_sample.py
+
+      - name: 배포할 파일 모으기 (index.html 하나만)
+        run: mkdir _site && cp dist/index.html _site/index.html
+
+      - uses: actions/upload-pages-artifact@v3
+        if: github.event_name != 'pull_request'
+        with:
+          path: _site
+
+  deploy:
+    needs: test
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    concurrency:
+      group: pages-deploy
+      cancel-in-progress: false
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
