@@ -7,6 +7,7 @@ tests/test_real.py
 # 비밀 값
 .env
 .clasprc.json
+.clasp.json
 secrets/
 # 실행 부산물
 __pycache__/
