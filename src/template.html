@@ -471,9 +471,11 @@ const MAILS = {remind:'미제출 알람', report:'최종 공지'};
 /* 사업부 이름과 확인 담당은 사업부장 일정표의 표현을 따른 추정값. 설정에서 고친다 */
 const ORG = CONF.org || [];
 const SHEET = CONF.link || '';
+/* 메일 양식은 실제로 보내던 메일을 따른다. 보내는 이름은 '본부미팅알람'(웍스 그룹 메일) */
+const SENDER = '본부미팅알람';
 const TPL = {
-  rs:'[리마인드 요청] {주차}차 본부미팅 아젠다 취합 요청 건_{마감일} 까지 (미제출 {미제출수}팀)',
-  rb:'안녕하세요.\n{주인팀장}입니다.\n\n{주차}차 본부미팅 아젠다 취합을 요청드립니다. (~{마감일} {마감시각} 까지)\n현재 {전체수}개 팀 중 {제출수}개 팀이 제출했고, 아직 {미제출수}개 팀이 제출하지 않았습니다.\n\n[미제출 팀]\n{미제출팀}\n\n하기 링크의 {주차} 입력 화면에 업데이트하여 주시면 감사하겠습니다.\n(없으면 없다 표기 부탁드립니다)\n\n[취합링크]\n{링크}\n\n추가 문의사항이 있으시면 말씀주십시오.\n감사합니다.\n\n{이름} 드림.\n'
+  rs:'[리마인드] {주차}차 본부미팅 아젠다 취합 요청 건_{마감일} {마감시각}',
+  rb:'팀장님 안녕하세요.\n' + SENDER + '입니다.\n\n\n{주차}차 본부미팅 아젠다 취합을 요청드립니다. (~{마감일} {마감시각} 까지)\n하기 링크의 {주차} 입력 화면에 업데이트하여 주시면 감사하겠습니다.\n(없으면 "없음" 표기 부탁드립니다)\n\n\n[취합링크]\n{링크}\n\n\n{마감일} {마감시각} 기준으로 미작성자분들께 개별 리마인드를 드릴 예정이오니, 그전까지 작성해주시기 바랍니다.\n\n\n' + SENDER + ' 올림\n'
 };
 const TKEYS = ['주차','마감일','마감시각','전체수','제출수','미제출수','미제출팀','링크','주인팀장','이름'];
 const SAMPLE = CONF.sample || '';
@@ -941,31 +943,41 @@ function mailParts(it){
   const dup = !!(ls.length && tt && (it.cell || (it.cat === 'cvo' && !it.sumLabel && nz(strip(ls[0])).includes(nz(tt).slice(0, 6)))));
   return {head: dup ? strip(ls[0]) : tt, rest: dup ? ls.slice(1) : ls};
 }
-/* 양식: 번호 제목 → ■ 소제목 → - 내용, 줄 끝에 (사업부장) */
+/* 실제 보고 메일 양식: 1. 분류 → (CVO) 1) 소분류 → ① 제목 / 사업부장 → - 내용, (그 밖) 1) 제목 / 사업부장 → - 내용
+ * 사람이 여러 팀 안건을 묶고 문장을 다듬어 보내므로, 이것은 초안이다. 주인팀장이 화면에서 고친 뒤 보낸다 */
+/* 분류 제목: '1. 이름(소분류/소분류)'. 첫 분류(cvo)는 소분류를 붙이지 않는다. 실제 이름은 데이터에서 읽는다 */
+const mailCat = (c, i) => (i + 1) + '. ' + c.name + (c.id === 'cvo' ? '' : '(' + (c.id === 'hr' ? '본부 내 ' : '') + c.subs.join('/') + ')');
+/* 첫 분류에서 안건이 없어도 제목 줄을 남기는 소분류: 데이터에 keep이 있으면 그것, 없으면 앞 세 개와 마지막(기타) */
+const keepSubs = c => c.keep || c.subs.slice(0, 3).concat(c.subs.slice(-1));
+const CIRC = '①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭⑮⑯⑰⑱⑲⑳';
+function mailBody(it, pad){
+  const p = mailParts(it), ls = p.rest.filter(l => l.trim()), min = ls.length ? Math.min(...ls.map(l => l.match(/^\s*/)[0].length)) : 0;
+  return ls.map(l => { const deep = l.match(/^\s*/)[0].length > min, x = l.trim().replace(/^[-*•■·]\s*/, '');
+    return pad + (deep && !/^[-*•■·]/.test(l.trim()) ? '  ' + x : '- ' + x) + '\n'; }).join('');
+}
 function mailText(label){
-  const all = itemsOf(label), ms = missOf(label), ed = S.edits[label] || {};
-  const who = it => ' (' + (team(it.team).head || it.team) + ')';
-  let t = label + '차 본부미팅 아젠다 취합 건 보고드립니다.\n\n[취합링크]\n' + (S.set.link || '') + '\n';
+  const all = itemsOf(label), ms = missOf(label), ed = S.edits[label] || {}, w = S.weeks.find(x => x.label === label), meet = label === S.active.label ? S.active.meeting : (w || {}).meeting;
+  const who = it => ' / ' + (team(it.team).head || it.team);
+  let t = '사업부장님, 센터장님 안녕하세요.\n' + label + '차 본부 미팅 아젠다 취합 내용을 아래와 같이 보고 드립니다.\n\n\n'
+    + '검토 후 추가 또는 삭제가 필요한 의제가 있으시면, 월요일' + (meet ? '(' + dt(meet).getDate() + '일)' : '') + ' 오전 7시까지 회신 부탁드립니다.\n'
+    + '주신 의견을 반영하여 최종 아젠다를 정리하겠습니다. 감사합니다.\n\n\n[취합링크]\n' + (S.set.link || '') + '\n';
   if (S.set.mailMiss !== false && ms.none.length) t += '\n※ 미제출 ' + ms.none.length + '팀 : ' + ms.none.join(', ') + '\n';
   S.cats.forEach((c, i) => {
-    t += '\n' + mailHead(c, i) + '\n';
+    t += '\n\n' + mailCat(c, i) + '\n';
     const list = ordered(label, c.id, all.filter(x => x.cat === c.id && (ed[x.id] || {}).inc !== false));
     if (c.id === 'cvo'){
       const last = c.subs[c.subs.length - 1];
-      c.subs.forEach(sb => {
+      c.subs.filter(sb => keepSubs(c).includes(sb) || list.some(x => x.sub === sb)).forEach((sb, j) => {
         const g = list.filter(x => (c.subs.includes(x.sub) ? x.sub : last) === sb);
-        if (!g.length && sb === last && c.subs.length > 1) return;
-        t += '\n■ ' + sb + '\n';
-        g.forEach(it => { const p = mailParts(it);
-          t += '    - ' + p.head + who(it) + '\n' + p.rest.map(l => { const x = l.trim(); return '      ' + (/^[-*:]/.test(x) ? x : '- ' + x) + '\n'; }).join(''); });
+        t += (j + 1) + ') ' + sb + '\n';
+        g.forEach((it, k) => { t += '  ' + (CIRC[k] || (k + 1) + ')') + ' ' + mailParts(it).head + who(it) + '\n' + mailBody(it, '   '); });
       });
     } else {
-      if (!list.length) t += ' - 없음\n';
-      list.forEach(it => { const p = mailParts(it), min = Math.min(...p.rest.map(l => l.match(/^\s*/)[0].length));
-        t += '\n■ ' + p.head + who(it) + '\n' + p.rest.map(l => { const x = l.slice(min), k = x.match(/^\s*/)[0].length; return ' ' + ' '.repeat(Math.min(k, 12)) + x.trim() + '\n'; }).join(''); });
+      if (!list.length) t += ' 없음\n';
+      list.forEach((it, k) => { t += ' ' + (k + 1) + ') ' + mailParts(it).head + who(it) + '\n' + mailBody(it, '  '); });
     }
   });
-  return t + '\n이상입니다.\n';
+  return t + '\n\n이상입니다.\n\n\n' + SENDER + ' 올림\n';
 }
 /* 본문 글을 서식이 있는 메일 모양으로 바꾼다. 번호 제목과 ■ 줄, CVO의 안건 줄은 굵게 */
 function mailHtml(body){
@@ -974,9 +986,8 @@ function mailHtml(body){
     const e = esc(l).replace(/^ +/, m => '&nbsp;'.repeat(m.length)), x = l.trim();
     if (!x) return '<div><br></div>';
     if (/^\d+\. \S/.test(l)){ sec = +l.match(/^\d+/)[0]; return '<div style="font-size:12pt;font-weight:700;margin-top:4px">' + e + '</div>'; }
-    if (/^■ /.test(l) || /^※/.test(l)) return '<div style="font-weight:700">' + e + '</div>';
+    if (/^■ /.test(l) || /^※/.test(l) || /^\s*(\d+\)|[①-⑳])\s/.test(l)) return '<div style="font-weight:700">' + e + '</div>';
     if (/^https?:\/\/\S+$/.test(x)) return '<div><a href="' + esc(x) + '">' + esc(x) + '</a></div>';
-    if (sec === 1 && /^ {4}- /.test(l)) return '<div style="font-weight:700">' + e + '</div>';
     return '<div>' + e + '</div>';
   });
   return '<div style="font-family:\'맑은 고딕\',\'Malgun Gothic\',sans-serif;font-size:10pt;line-height:1.65;color:#222">' + rows.join('') + '</div>';
@@ -1175,7 +1186,7 @@ function mailDraft(type, week){
     return {type, week:a.label, to:mails.length ? mails.join(', ') : m.join(', '), cc:S.set.ccMail || '', subject:fillTpl(S.set.rs, who), body:fillTpl(S.set.rb, who), n:m.length};
   }
   const w = week || S.view;
-  return {type:'report', week:w, to:S.set.toMail || S.set.to, cc:S.set.ccMail || S.set.cc, subject:'[보고] ' + w + '차 본부미팅 아젠다 보고 건', body:mailText(w)};
+  return {type:'report', week:w, to:S.set.toMail || S.set.to, cc:S.set.ccMail || S.set.cc, subject:'[보고] ' + w + '차 본부미팅 아젠다 취합의 건', body:mailText(w)};
 }
 const mailOf = type => { const d = (S.md || {})[type]; return d && d.dirty && d.week === S.active.label ? d : mailDraft(type, S.active.label); };
 function vMailBox(type, i, defOpen){

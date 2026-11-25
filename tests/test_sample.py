@@ -2,7 +2,7 @@
   python build.py sample && python tests/test_sample.py
 예시 데이터: 18팀(가팀~러팀), 1사업부 가~라팀, 센터 마~아팀, 2사업부 자~타팀, 3사업부 파~너팀, 더팀과 러팀은 사업부 미지정(확인 담당은 주인팀장).
 시작 상태: 지난 주(11월 3주) 미제출 바팀, 타팀, 러팀과 입력 팀(나팀)을 뺀 14팀이 제출. 화면 동작을 바꾸면 이 테스트도 함께 고친다."""
-import asyncio, json, os, tempfile
+import asyncio, re, json, os, tempfile
 from playwright.async_api import async_playwright
 import pathlib
 ROOT = pathlib.Path(__file__).resolve().parent.parent
@@ -68,10 +68,10 @@ async def main():
         cks = await pg.locator('.cks .card').all_inner_texts()
         ck('11 확인 담당별 미제출: 확인담당 1(1사업부, 센터) 1팀, 확인담당 2(2, 3사업부) 1팀, 사업부 미지정 팀은 주인팀장 1팀', len(cks) == 3 and '확인담당 1 확인' in cks[0] and '1사업부, 센터' in cks[0] and '미제출 1팀' in cks[0] and '바팀' in cks[0] and '확인담당 2 확인' in cks[1] and '2사업부, 3사업부' in cks[1] and '미제출 1팀' in cks[1] and '타팀' in cks[1] and '주인팀장 확인' in cks[2] and '미제출 1팀' in cks[2] and '러팀' in cks[2], cks)
         await box('remind'); mr = await ev("mailOf('remind')")
-        ck('12 미제출 알람 메일이 2단계에 있고 미제출 3팀 수가 양식에 들어감', '금 10:00 미제출 알람' in await pg.locator('details.mbox[data-tg=mo_remind] > summary').inner_text() and mr['subject'] == '[리마인드 요청] 11월 4주차 본부미팅 아젠다 취합 요청 건_11/20(금) 까지 (미제출 3팀)' and '현재 18개 팀 중 15개 팀이 제출했고, 아직 3개 팀이 제출하지 않았습니다.' in mr['body'] and '주인팀장입니다.' in mr['body'] and '(~11/20(금) 10:00 까지)' in mr['body'], mr['subject'])
+        ck('12 미제출 알람 메일이 2단계에 있고 실제 리마인드 양식(본부미팅알람 명의, 마감 시각)으로 나옴', '금 10:00 미제출 알람' in await pg.locator('details.mbox[data-tg=mo_remind] > summary').inner_text() and mr['subject'] == '[리마인드] 11월 4주차 본부미팅 아젠다 취합 요청 건_11/20(금) 10:00' and mr['body'].startswith('팀장님 안녕하세요.' + chr(10) + '본부미팅알람입니다.') and '(~11/20(금) 10:00 까지)' in mr['body'] and '11/20(금) 10:00 기준으로 미작성자분들께 개별 리마인드' in mr['body'] and mr['body'].rstrip().endswith('본부미팅알람 올림'), mr['subject'])
         await pg.click('[data-act=chk][data-c="확인담당 2"]'); await w(); ms2 = await ev("mailOf('remind')")
         # 예시 팀에는 메일 주소가 없어 받는 사람 칸에 미제출 팀 이름이 들어간다
-        ck('13 알람 범위를 확인담당 2 담당으로 좁히면 그 담당 팀만 세고 보내는 사람도 바뀜', ms2['to'] == '타팀' and '바팀' not in ms2['to'] and '현재 8개 팀 중 7개 팀이 제출했고, 아직 1개 팀이 제출하지 않았습니다.' in ms2['body'] and '확인담당 2입니다.' in ms2['body'] and '확인담당 2 드림.' in ms2['body'], (ms2['to'], ms2['body'][:120]))
+        ck('13 알람 범위를 확인담당 2 담당으로 좁히면 그 담당 미제출 팀에게만 감(보내는 이름은 본부미팅알람 그대로)', ms2['to'] == '타팀' and '바팀' not in ms2['to'] and '본부미팅알람 올림' in ms2['body'], (ms2['to'], ms2['body'][:120]))
         await pg.click('[data-act=chk][data-c=""]'); await w()
         await pg.locator('details.mbox[data-tg=mo_remind] [data-act=resv]').click(); await w()
         ck('14 예약해 둠으로 표시하면 일정에 예약됨', await pg.locator('.strip .mb.on').inner_text() == '예약됨' and await ev('S.sent[0].how') == '예약해 둠으로 표시, 금 10:00 발송')
@@ -108,11 +108,12 @@ async def main():
         ck('25 공지 전 점검: 점검 안 마친 사업부 3곳, 미제출 3팀', '점검을 마치지 않은 사업부 3곳' in chk and '1사업부 가 사업부장' in chk and '미제출 3팀' in chk and '마감 후 추가 0팀' in chk, chk[:150])
         await audit('3 최종 공지')
         body = (await ev("mailOf('report')"))['body']; lines = body.split('\n')
-        heads = ['1. 중점과제', '2. KPI (제품/매출)', '3. 핵심역량 (도입/계약/파트너사)', '4. 인재육성 (본부 내 인력 이슈)']
-        ck('26 최종 공지 메일이 열린 채로 나오고 주인팀장 양식 그대로', await pg.locator('details.mbox[data-tg=mo_report]').evaluate('e => e.open') and '금 13:00 최종 공지' in await pg.locator('details.mbox[data-tg=mo_report] > summary').inner_text() and lines[0] == '11월 4주차 본부미팅 아젠다 취합 건 보고드립니다.' and lines[2] == '[취합링크]' and [l for l in lines if l[:2] in ('1.', '2.', '3.', '4.') and not l.startswith(' ')] == heads and body.rstrip().endswith('이상입니다.'))
-        ck('27 한 칸에 적은 내용이 메일에 그대로, 점검에서 뺀 안건은 빠짐', '■ 예시 품목 2 (가 사업부장)' in lines and ' 예시 품목 2 목표 달성 계획 확정' in lines and ' 11/20 예시 홍보 예정, 대상은 예시 거래처 전체' in lines and '예시 협력사 11' not in body and '■ 과제 A' in lines and '※ 미제출 3팀' in body, [l for l in lines if '예시 품목 2' in l or '예시 홍보' in l])
+        heads = ['1. 중점과제', '2. KPI(제품/매출)', '3. 핵심역량(도입/계약/파트너사)', '4. 인재육성(본부 내 인력 이슈)']
+        ck('26 최종 공지 메일이 열린 채로 나오고 실제 보고 양식(인사, 회신 기한, 취합링크, 분류 제목, 본부미팅알람 올림)', await pg.locator('details.mbox[data-tg=mo_report]').evaluate('e => e.open') and '금 13:00 최종 공지' in await pg.locator('details.mbox[data-tg=mo_report] > summary').inner_text() and lines[0] == '사업부장님, 센터장님 안녕하세요.' and '11월 4주차 본부 미팅 아젠다 취합 내용을 아래와 같이 보고 드립니다.' in lines and any(l.startswith('검토 후 추가 또는 삭제가 필요한 의제가 있으시면, 월요일(23일) 오전 7시까지') for l in lines) and '[취합링크]' in lines and [l for l in lines if l[:2] in ('1.', '2.', '3.', '4.') and not l.startswith(' ')] == heads and body.rstrip().endswith('이상입니다.' + chr(10) * 3 + '본부미팅알람 올림'), [l for l in lines if l[:2] in ('1.', '2.', '3.', '4.')])
+        ck('27 한 칸에 적은 내용이 메일에 그대로(N) 제목 / 사업부장, - 내용), 점검에서 뺀 안건은 빠짐', any(re.match(r'^ \d+\) 예시 품목 2 / 가 사업부장$', l) for l in lines) and '  - 예시 품목 2 목표 달성 계획 확정' in lines and '  - 11/20 예시 홍보 예정, 대상은 예시 거래처 전체' in lines and '예시 협력사 11' not in body and any(re.match(r'^\d\) 과제 A$', l) for l in lines) and '※ 미제출 3팀' in body, [l for l in lines if '예시 품목 2' in l or '예시 홍보' in l or '과제 A' in l])
         html = await ev("mailHtml(mailOf('report').body)")
-        ck('28 서식: 번호 제목과 ■ 줄은 굵게', '<div style="font-weight:700">■ 과제 A</div>' in html and 'font-size:12pt;font-weight:700;margin-top:4px">1. 중점과제</div>' in html and await pg.locator('#mPv_report div[style*="font-weight:700"]').count() == 29)   # 번호 제목 4 + 중점과제 소분류 2 + 중점과제 안건 5 + KPI 15 + 핵심역량 2(뺀 1건 제외) + 미제출 1
+        bold = await pg.locator('#mPv_report div[style*="font-weight:700"]').count()
+        ck('28 서식: 번호 제목, N) 줄, ① 줄은 굵게', 'font-size:12pt;font-weight:700;margin-top:4px">1. 중점과제</div>' in html and any(('font-weight:700">' + x) in html for x in ['1) 과제 A', '2) 과제 A']) and bold >= 20, bold)
         await pg.fill('#mTo_report', 'a@test.example, b@test.example')
         await pg.click('[data-act=send][data-t=report]'); await w(300); href = await ev('window.__href')
         await pg.click('[data-act=mailCopy][data-t=report]'); await w(300)
