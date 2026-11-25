@@ -2,7 +2,8 @@
 const M = __MAIL__;
 const SEND = __SEND__;
 const step = [];
-for (const t of (await listBrowserTabs()).filter(t => /write\/popup/.test(t.url || ''))) { const x = await attachBrowserTab(t.targetId); x.on('dialog', d => d.accept()); try { await x.evaluate(() => window.close()); } catch (e) {} }
+// 남아 있는 메일쓰기 창은 묻지 않고 강제로 닫는다. 어떤 확인 창도 '예'로 답하지 않는다 (예전에 '예' 자동 응답으로 남은 창이 발송된 일이 있음)
+for (const t of (await listBrowserTabs()).filter(t => /write\/popup/.test(t.url || ''))) { const x = await attachBrowserTab(t.targetId); x.on('dialog', d => d.dismiss()); try { await x.close(); } catch (e) {} }
 await sleep(800);
 // 메일함 열기. 로그인이 풀려 있으면 저장된 값으로 채워진 경우에만 [로그인] 버튼을 누른다 (값을 입력하거나 읽지 않는다)
 const pm = await openTab('https://mail.worksmobile.com/'); await sleep(3000);
@@ -69,8 +70,10 @@ if (diff >= 0) console.log('첫 차이 줄', diff, JSON.stringify(String(got[dif
 checks.서명바꿈 = signSwitched;
 console.log(JSON.stringify({ 서명: M.sign || '(기본)', 서명바꿈: signSwitched, 서명내용: String(r.signText || '').replace(/\s+/g, ' ').trim().slice(0, 40) }));
 const pass = handled && diff < 0 && checks.서명그대로 && checks.글자크기14 && checks.받는사람1명 && subjOK && checks.보내는주소일치 && checks.굵게확인 && signSwitched;
-if (!pass) { console.log('확인 실패: 보내지 않음'); }
-else if (!SEND) { console.log('확인 통과 (보내지 않는 시험 실행)'); }
+// 보내지 않을 때는 채운 메일쓰기 창을 묻지 않고 바로 닫는다 (남겨 두지 않는다)
+const discard = async () => { pw.on('dialog', d => d.dismiss()); try { await pw.close(); } catch (e) {} await sleep(2500); console.log('메일쓰기 창 닫음(보내지 않음), 남은 창', (await listBrowserTabs()).filter(t => /write\/popup/.test(t.url || '')).length); };
+if (!pass) { console.log('확인 실패: 보내지 않음'); await discard(); }
+else if (!SEND) { console.log('확인 통과 (보내지 않는 시험 실행)'); await discard(); }
 else {
   await pw.getByRole('button', { name: '임시저장', exact: true }).click(); await sleep(1200);
   await pw.getByRole('button', { name: '보내기', exact: true }).first().click(); await sleep(2500);
