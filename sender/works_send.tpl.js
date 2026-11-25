@@ -37,6 +37,8 @@ if (M.sign) {
 const signBefore = await body.evaluate(b => { const s = b.querySelector('[data-workseditor=sign-content]'); return s ? s.textContent : null; });
 const toBox = pw.getByRole('combobox', { name: '받는사람' });
 await toBox.click(); await toBox.fill(M.to); await toBox.press('Enter');
+// M.cc: 참조 한 곳 (있을 때만)
+if (M.cc) { const ccBox = pw.getByRole('combobox', { name: '참조' }); await ccBox.click(); await ccBox.fill(M.cc); await ccBox.press('Enter'); await sleep(500); }
 await pw.getByRole('textbox', { name: '제목' }).fill(M.subject);
 await body.click({ position: { x: 5, y: 5 } }); await pw.keyboard.press('Control+Home');
 const handled = await body.evaluate((b, text) => { const dt = new DataTransfer(); dt.setData('text/plain', text); const ev = new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }); const n = b.ownerDocument.getSelection().anchorNode; (n && n.nodeType === 3 ? n.parentElement : (n || b)).dispatchEvent(ev); return ev.defaultPrevented; }, M.text);
@@ -64,7 +66,7 @@ const snap = await snapshot(pw, { interactive: true });
 const chips = (snap.tree.match(/link "수정"/g) || []).length;
 const subjOK = (await pw.getByRole('textbox', { name: '제목' }).inputValue()) === M.subject;
 const toOK = snap.tree.includes('text: "' + M.to + '"');
-const checks = { 붙여넣기처리: handled, 본문일치: diff < 0, 본문줄: got.length + '/' + exp.length, 서명그대로: r.signText === signBefore, 글자크기14: r.sizes && r.sizes.length === 1 && r.sizes[0] === '14px', 글꼴: r.fonts, 받는사람1명: chips === 1 && toOK, 제목일치: subjOK, 보내는주소: fromNow, 보내는이름: nameNow, 보내는주소일치: !M.from || fromNow === M.from, 굵게: boldIdx.length + '줄', 굵게확인: weights.bold.every(x => x >= 600) && weights.others === 0 };
+const checks = { 붙여넣기처리: handled, 본문일치: diff < 0, 본문줄: got.length + '/' + exp.length, 서명그대로: r.signText === signBefore, 글자크기14: r.sizes && r.sizes.length === 1 && r.sizes[0] === '14px', 글꼴: r.fonts, 받는사람1명: chips === (M.cc ? 2 : 1) && toOK && (!M.cc || snap.tree.includes('text: "' + M.cc + '"')), 제목일치: subjOK, 보내는주소: fromNow, 보내는이름: nameNow, 보내는주소일치: !M.from || fromNow === M.from, 굵게: boldIdx.length + '줄', 굵게확인: weights.bold.every(x => x >= 600) && weights.others === 0 };
 console.log(JSON.stringify(checks));
 if (diff >= 0) console.log('첫 차이 줄', diff, JSON.stringify(String(got[diff]).slice(0, 50)), '/', JSON.stringify(String(exp[diff]).slice(0, 50)));
 checks.서명바꿈 = signSwitched;
