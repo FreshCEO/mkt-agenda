@@ -534,7 +534,8 @@ function save(){ try{ localStorage.setItem(R.on ? LS + '-srv' : LS, JSON.stringi
  * 저장 단위: core(공통) 와 team:<팀>(이번 주 그 팀의 안건, 없음 체크, 제출 상태). 팀장 입력 키는 team 조각만 저장한다.
  */
 const CONN = 'hq-agenda-conn';
-const LOCAL = ['tab','ui','md','view','role','roleTeam','inTeam','mail','log'];
+/* md(주인팀장이 고친 메일 초안)는 발송기가 읽어야 하므로 서버에 함께 저장한다 */
+const LOCAL = ['tab','ui','view','role','roleTeam','inTeam','mail','log'];
 const TEAM_F = ['none','subs','late','fix'];
 const R = {on:false, ready:false, url:'', key:'', role:'', ver:{}, last:{}, logs:[], busy:false, again:false, state:'', at:'', err:'', t:0};
 (function(){
@@ -626,6 +627,7 @@ async function srvBoot(){
   const names = S.teams.map(t => t.name);
   if (!names.includes(S.roleTeam)) S.roleTeam = names[0] || ''; if (!names.includes(S.inTeam)) S.inTeam = names[0] || '';
   if (R.role === 'input') S.role = 'lead';
+  if (!S.md) S.md = {};
   R.ready = true;
 }
 const stampNow = () => { const d = new Date(), p = n => String(n).padStart(2,'0'); return p(d.getHours()) + ':' + p(d.getMinutes()); };
