@@ -17,7 +17,7 @@ function doPost(e) {
     const role = roleOf(q.key);
     const who = String(q.who || '').slice(0, 60);
     const args = q.args || {};
-    if (q.op === 'get') res = { ok: true, data: opGet(role, args) };
+    if (q.op === 'get') res = { ok: true, data: withLock(() => opGet(role, args)) };   // 쓰는 중간 상태를 읽지 않게 잠금
     else if (q.op === 'put') res = { ok: true, data: withLock(() => opPut(role, who, args)) };
     else throw new Error('알 수 없는 요청');
   } catch (err) {
@@ -88,7 +88,8 @@ function opPut(role, who, args) {
   // 관리 키만: 화면에 더는 없는 팀 조각을 먼저 지운다 (데이터를 통째로 바꿨을 때). 아래쪽 줄부터 지워 줄 번호가 밀리지 않게 한다
   if (role === 'admin') {
     const sent = new Set((args.slices || []).map(x => String(x.k || '')));
-    const gone = (args.drop || []).map(String).filter(k => /^team:.+/.test(k) && map[k] && !sent.has(k));
+    // 지우기는 화면이 마지막으로 본 버전과 지금 버전이 같을 때만 (그사이 누가 저장했으면 남긴다)
+    const gone = (args.drop || []).filter(x => x && /^team:.+/.test(String(x.k)) && map[x.k] && !sent.has(x.k) && map[x.k].ver === Number(x.ver)).map(x => String(x.k));
     gone.sort((x, y) => map[y].row - map[x].row).forEach(k => { storeSheet().deleteRow(map[k].row); dropped.push(k); });
     if (dropped.length) { map = readStore(); teamTouched = true; }
   }

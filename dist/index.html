@@ -234,7 +234,13 @@ table.st{width:100%;border-collapse:collapse;font-size:14px}
 .log div{padding:6px 0;border-bottom:1px solid var(--line)}
 .log span{color:var(--mute);margin-right:8px;font-variant-numeric:tabular-nums;font-weight:600}
 
-.sync{position:fixed;right:14px;bottom:14px;z-index:40;background:#fffaeb;border:1px solid #d9c08a;border-radius:999px;padding:6px 14px;font-size:13px;box-shadow:0 4px 14px rgba(70,50,20,.18)}
+.sync{display:inline-flex;align-items:center;gap:2px;background:#fffaeb;color:#3a2f14;border:1px solid #d9c08a;border-radius:999px;padding:4px 12px;font-size:13px;white-space:nowrap}
+.sync.float{position:fixed;right:14px;bottom:14px;z-index:40;box-shadow:0 4px 14px rgba(70,50,20,.18)}
+.sync-slot{display:inline-flex}
+.leadbar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;background:#fffaeb;border:1px solid #e3cf9e;border-radius:14px;padding:10px 14px;margin:14px 0 4px;font-size:15px}
+.leadbar .sp{flex:1}
+.lost{background:#fff1ec;border:1px solid #e9a58f;border-radius:12px;padding:10px 12px;margin:10px 0}
+.lost textarea{width:100%;min-height:90px;margin-top:6px;font-size:13px}
 .sync span{margin-left:6px;padding:1px 8px;border-radius:999px;background:#f1e2b8;font-size:12px}
 .sync.fail,.sync.boot{background:#ffe6e1;border-color:#d77}
 .sync button{margin-left:6px;border:1px solid #c66;background:#fff;border-radius:999px;padding:1px 10px;cursor:pointer;font-size:12px}
@@ -586,17 +592,28 @@ async function srvPush(){
   if (!R.ready) return; if (R.busy){ R.again = true; return; }
   const {cur, keys} = srvChanged(), logs = R.logs.splice(0);
   /* 관리 키: 화면에 더는 없는 팀 조각은 서버에서도 지운다 (데이터를 통째로 가져왔을 때) */
-  const drop = R.role === 'admin' ? Object.keys(R.last).filter(k => k.indexOf('team:') === 0 && !(k in cur)) : [];
-  if (!keys.length && !logs.length && !drop.length){ if (R.state === 'fail') srvState('saved'); return; }
+  /* 지우기는 내가 마지막으로 본 버전과 서버 버전이 같을 때만 서버가 지운다 (그사이 누가 저장했으면 남긴다) */
+  const drop = R.role === 'admin' ? Object.keys(R.last).filter(k => k.indexOf('team:') === 0 && !(k in cur)).map(k => ({k, ver:R.ver[k] || 0})) : [];
+  if (!keys.length && !logs.length && !drop.length){ if (R.state === 'fail') srvState('saved'); if (R.afterSave){ toast(R.afterSave + ' ' + (R.at || '')); R.afterSave = null; } return; }
   R.busy = true; srvState('saving');
+  const after = R.afterSave; R.afterSave = null;
   try{
     const d = await srvCall('put', {slices:keys.map(k => ({k, ver:R.ver[k] || 0, json:cur[k]})), logs:logs.map(x => ({msg:x.msg})), drop});
     keys.forEach(k => { if (d.vers[k] != null){ R.ver[k] = d.vers[k]; R.last[k] = cur[k]; } });
     (d.dropped || []).forEach(k => { delete R.ver[k]; delete R.last[k]; });
-    if (d.conflicts.length){ d.conflicts.forEach(c => { R.ver[c.k] = c.ver; R.last[c.k] = c.json; }); srvApply(d.conflicts.map(c => c.k)); }
+    const cf = d.conflicts || [], gone = cf.filter(c => !c.json).map(c => c.k), names = S.teams.map(t => t.name);
+    if (cf.length){
+      /* 덮어쓰기 전에 내 입력을 보관해 두고 화면에 보여 준다 */
+      cf.forEach(c => { if (c.k.indexOf('team:') === 0 && cur[c.k]){ try{ const its = JSON.parse(cur[c.k]).items || []; if (its.length) (S.ui.lost = S.ui.lost || {})[c.k.slice(5)] = {at:stampNow(), text:its.map(i => '[' + (i.title || '') + ']\n' + [compose(i), i.detail].filter(Boolean).join('\n')).join('\n\n')}; }catch(e){} } });
+      cf.forEach(c => { if (c.json){ R.ver[c.k] = c.ver; R.last[c.k] = c.json; } else { delete R.ver[c.k]; delete R.last[c.k]; } });
+      /* 서버에서 지워진 팀: 팀 목록에 없으면 화면에서도 뺀다 (있으면 다음 저장 때 새로 만든다) */
+      gone.filter(k => !names.includes(k.slice(5))).forEach(k => { const n = k.slice(5); S.active.items = S.active.items.filter(i => i.team !== n); TEAM_F.forEach(f => { if (S.active[f]) delete S.active[f][n]; }); });
+      srvApply(cf.filter(c => c.json).map(c => c.k));
+    }
     srvLog(d.log); R.at = stampNow(); R.busy = false; srvState('saved');
-    if (d.conflicts.length){ render(); toast('다른 사람이 먼저 고친 내용이 있어 최신 내용으로 바꿨습니다. 다시 확인해 주세요.'); }
-  }catch(e){ R.logs.unshift(...logs); R.busy = false; R.err = e.message; srvState('fail'); }
+    if (cf.length){ render(); toast('다른 사람이 먼저 고친 내용이 있어 최신 내용으로 바꿨습니다. 내가 쓴 내용은 입력 칸 위에 보관해 두었습니다.'); }
+    else if (after) toast(after + ' ' + R.at);
+  }catch(e){ R.logs.unshift(...logs); R.busy = false; R.err = e.message; srvState('fail'); if (after){ S.ui.err = '제출을 서버에 저장하지 못했습니다. 위쪽 [다시 저장]을 눌러 주세요.'; render(); toast('저장하지 못했습니다. [다시 저장]을 눌러 주세요.'); } }
   if (R.again){ R.again = false; srvSchedule(); }
 }
 async function srvPoll(){
@@ -620,6 +637,8 @@ async function srvBoot(){
   let cached = null; try{ cached = JSON.parse(localStorage.getItem(LS + '-srv') || 'null'); }catch(e){}
   if (!R.last.core){
     if (R.role !== 'admin') throw new Error('아직 서버에 데이터가 없습니다. 관리 키로 먼저 열어 주세요.');
+    /* 팀 조각만 남고 공통 조각이 없으면 예시로 새로 시작하지 않는다 (실제 팀 자료를 지울 수 있음) */
+    if (Object.keys(R.last).length) throw new Error('시트에 공통 데이터(core)가 없습니다. store 시트를 확인해 주세요.');
     boot(); log('구글 시트 첫 연결: 예시 데이터로 시작');
   } else {
     S = srvJoin(R.last); const b = base();
@@ -628,20 +647,25 @@ async function srvBoot(){
   }
   const names = S.teams.map(t => t.name);
   if (!names.includes(S.roleTeam)) S.roleTeam = names[0] || ''; if (!names.includes(S.inTeam)) S.inTeam = names[0] || '';
-  if (R.role === 'input') S.role = 'lead';
+  if (R.role === 'input'){ S.role = 'lead'; const me = myTeam(); S.roleTeam = names.includes(me) ? me : ''; }
   if (!S.md) S.md = {};
   R.ready = true;
 }
+/* 팀장 키: 이 브라우저에서 처음 고른 팀을 '내 팀'으로 기억한다 */
+const MYTEAM = 'hq-agenda-myteam';
+const myTeam = () => { try{ return localStorage.getItem(MYTEAM) || ''; }catch(e){ return ''; } };
+const setMyTeam = n => { try{ localStorage.setItem(MYTEAM, n); }catch(e){} };
 const stampNow = () => { const d = new Date(), p = n => String(n).padStart(2,'0'); return p(d.getHours()) + ':' + p(d.getMinutes()); };
+/* 저장 표시: 화면 위쪽 띠(.sync-slot) 안에 둔다. 띠가 그려지기 전(불러오는 중)에는 화면 아래에 띄운다 */
 function srvState(st){
   R.state = st; if (!R.on) return;
-  let el = document.getElementById('sync');
-  if (!el){ el = document.createElement('div'); el.id = 'sync'; el.setAttribute('role','status'); document.body.appendChild(el);
-    el.addEventListener('click', e => { const a = e.target.dataset && e.target.dataset.sy; if (a === 'retry') srvPush(); if (a === 'reload') location.reload(); }); }
   const t = {load:'구글 시트에서 불러오는 중…', saving:'저장 중…', saved:R.at ? '저장됨 ' + R.at : '구글 시트 연결됨', fail:'저장 못 함: ' + R.err, boot:'불러오지 못함: ' + R.err}[st] || '';
-  el.className = 'sync ' + st;
-  el.innerHTML = esc(t) + (st === 'fail' ? ' <button data-sy="retry">다시 저장</button>' : st === 'boot' ? ' <button data-sy="reload">다시 열기</button>' : '') + (R.role ? ' <span>' + (R.role === 'admin' ? '관리' : '팀장 입력') + '</span>' : '');
+  const html = esc(t) + (st === 'fail' ? ' <button data-sy="retry">다시 저장</button>' : st === 'boot' ? ' <button data-sy="reload">다시 열기</button>' : '') + (R.role ? ' <span>' + (R.role === 'admin' ? '관리' : '팀장 입력') + '</span>' : '');
+  const slot = document.querySelector('.sync-slot'), old = document.getElementById('sync');
+  if (slot){ if (old && !slot.contains(old)) old.remove(); slot.innerHTML = '<span id="sync" role="status" class="sync ' + st + '">' + html + '</span>'; }
+  else { let el = old; if (!el){ el = document.createElement('div'); el.id = 'sync'; el.setAttribute('role','status'); document.body.appendChild(el); } el.className = 'sync float ' + st; el.innerHTML = html; }
 }
+document.addEventListener('click', e => { const a = e.target.dataset && e.target.dataset.sy; if (a === 'retry') srvPush(); if (a === 'reload') location.reload(); });
 window.addEventListener('beforeunload', e => { if (R.ready && (R.busy || R.state === 'fail' || srvChanged().keys.length)){ e.preventDefault(); e.returnValue = ''; } });
 
 const stAt = i => DEF_T[i] ? ((S.set.times || {})[i] || DEF_T[i]) : FIX_T[i];
@@ -771,6 +795,8 @@ function realStage(meeting){
 }
 function tick(){
   if (S.set.clock !== 'real') return false;
+  /* 서버 모드에서 시점을 넘기고 새 주차를 여는 것은 관리 화면(발송기 포함)만 한다. 팀장 화면이 하면 팀 조각이 새 주차로 덮인다 */
+  if (R.on && R.role !== 'admin') return false;
   let ch = false, guard = 0;
   while (guard++ < 60){
     const r = realStage(S.active.meeting);
@@ -794,8 +820,8 @@ function vTop(){
         <option value="owner" ${S.role==='owner'?'selected':''}>주인팀장</option>
         <option value="lead" ${S.role==='lead'?'selected':''}>팀장</option>
       </select>
-      ${isLead() ? `<select data-ch="roleTeam" aria-label="소속 팀">${S.teams.map(t => `<option ${t.name===S.roleTeam?'selected':''}>${esc(t.name)}</option>`).join('')}</select>` : ''}
-      ${R.on ? '' : '<button class="btn sm ghost" data-act="reset">처음 상태로</button>'}
+      ${isLead() ? `<select data-ch="roleTeam" aria-label="내 팀">${S.roleTeam ? '' : '<option value="" selected>내 팀 고르기</option>'}${S.teams.map(t => `<option ${t.name===S.roleTeam?'selected':''}>${esc(t.name)}</option>`).join('')}</select>` : ''}
+      ${R.on ? '<span class="sync-slot"></span>' : '<button class="btn sm ghost" data-act="reset">처음 상태로</button>'}
     </div></div></header>`;
 }
 const phTime = i => i === 0 ? stT(1) + '까지' : i === 1 ? stT(2) + '까지' : i === 2 ? stT(3) + '까지' : '월 ' + stAt(4).h + ' 전 출력';
@@ -816,11 +842,19 @@ function vWeek(){
   return `<section class="flow" aria-label="이번 주 진행">
     <div class="flow-h"><b>${esc(a.label)} 본부의제</b><span>본부미팅 ${fmt(a.meeting)}, 입력 마감 ${fmt(deadline())} ${dlT()}</span></div>
     <div class="phs" role="tablist" aria-label="진행 단계">${PH.map((p,i) => `<button class="ph ${i < cur ? 'done' : ''} ${i === cur ? 'now' : ''}" role="tab" aria-selected="${S.tab === p.id}" data-act="tab" data-k="${p.id}">${i === cur ? '<i class="badge">지금</i>' : ''}<span class="no">${i+1}</span><span class="nm">${p.n}</span><span class="tm">${phTime(i)}, ${p.who}</span><span class="fx">${esc(phFact(i))}</span></button>`).join('')}</div>
-    <div class="flow-f"><span>지금은 <b>${stName(a.stage)}</b> 시점입니다. ${STAGES[a.stage].d[0]}</span><span class="sp"></span>
+    <div class="flow-f"><span>지금은 <b>${stName(a.stage)}</b> 시점입니다. ${canManage() ? STAGES[a.stage].d[0] : ''}</span><span class="sp"></span>
     ${real || !canManage() ? '' : `<button class="btn sm" data-act="prev" ${a.stage === 0 ? 'disabled' : ''}>이전 시점</button><button class="btn sm" data-act="next" ${a.stage === LAST ? 'disabled' : ''}>다음 시점</button>`}
-    <span class="clock">${real ? '실제 시계 따르는 중' : '시연: 직접 넘기기'}</span>
+    ${canManage() ? `<span class="clock">${real ? '실제 시계 따르는 중' : '시연: 직접 넘기기'}</span>` : ''}
     ${a.stage === LAST && canManage() ? `<button class="btn pri sm" data-act="rollover">다음 주차 시작</button>` : ''}</div>
   </section>`;
+}
+
+/* 팀장 키 화면 위쪽: 단계 카드 대신 내 팀 상태 한 줄과 단계 바로가기 (휴대폰에서 입력 칸까지 바로 닿게) */
+function vLeadBar(){
+  const a = S.active, n = S.roleTeam, sub = n && a.subs[n];
+  return `<section class="leadbar" aria-label="내 팀 상태"><b>${esc(a.label)}</b><span>${n ? esc(n) + ' · ' + (sub ? '제출 완료 ' + esc(sub) : (locked() ? '미제출(마감 지남)' : '미제출')) : '내 팀을 먼저 골라 주세요'}</span>
+    <span>마감 <b>${fmt(deadline())} ${dlT()}</b></span><span class="sp"></span>
+    <span class="seg">${PH.map(p => `<button aria-pressed="${S.tab === p.id}" data-act="tab" data-k="${p.id}">${p.n}</button>`).join('')}</span></section>`;
 }
 
 /* ---------- 화면: 주간 보고 ---------- */
@@ -854,7 +888,7 @@ function ordered(label, c, list){
 function vIn(){
   const a = S.active, ms = missOf(a.label);
   let h = `<div class="row"><h2>1. 안건 기입</h2><span class="pill">${locked() ? '마감됨' : '기입 받는 중'}</span></div>
-    <p class="lead">${isLead() ? '이번 주 안건을 적고 제출하는 단계입니다. 지난 주 내용이 들어 있으니 바뀐 부분만 고치면 됩니다.' : '각 팀장이 ' + stT(1) + '까지 안건을 적고 제출하는 단계입니다. 제출 현황을 한눈에 봅니다.'}</p>${vStrip(PH[0])}`;
+    <p class="lead">${isLead() ? '이번 주 안건을 적고 제출하는 단계입니다. 지난 주 내용이 들어 있으니 바뀐 부분만 고치면 됩니다.' : '각 팀장이 ' + stT(1) + '까지 안건을 적고 제출하는 단계입니다. 제출 현황을 한눈에 봅니다.'}</p>${R.on && isLead() ? '' : vStrip(PH[0])}`;
   if (canManage()){
     if (a.seed) h += `<div class="note" style="margin-bottom:4px">시연용 초기 상태입니다. ${a.seed}개 팀은 지난 주 내용 그대로 제출한 것으로 넣어 두었습니다. 실제 운영에서는 모든 팀이 미제출로 시작합니다.</div>`;
     h += `<section class="blk" style="margin-top:18px"><div class="row"><h3>제출 현황</h3><span class="pill">제출 <b>${ms.total - ms.none.length}</b> / ${ms.total}팀</span>${ms.none.length ? `<span class="pill">미제출 <b>${ms.none.length}</b>팀</span>` : ''}<span class="sp"></span><span class="small mute">팀을 누르면 그 팀의 입력 내용이 아래에 열립니다</span></div>
@@ -944,8 +978,9 @@ function mailParts(it){
   let ls = src.split('\n').map(l => l.replace(/\s+$/, '')).filter(l => l.trim());
   const tt = (it.title || '').replace(/…$/, '').trim(), first = (full.split('\n').find(l => l.trim()) || '');
   if (cut && it.cell) return {head: strip(first), rest: ls.filter(l => strip(l) !== strip(first))};
-  const dup = !!(ls.length && tt && (it.cell || (it.cat === 'cvo' && !it.sumLabel && nz(strip(ls[0])).includes(nz(tt).slice(0, 6)))));
-  return {head: dup ? strip(ls[0]) : tt, rest: dup ? ls.slice(1) : ls};
+  const bare = s => nz(strip(s).replace(/^\[|\]$/g, ''));
+  const dup = !!(ls.length && tt && (it.cell || bare(ls[0]) === nz(tt) || (it.cat === 'cvo' && !it.sumLabel && nz(strip(ls[0])).includes(nz(tt).slice(0, 6)))));
+  return {head: dup && !(ls.length && bare(ls[0]) === nz(tt)) ? strip(ls[0]) : tt, rest: dup ? ls.slice(1) : ls};
 }
 /* 실제 보고 메일 양식: 1. 분류 → (CVO) 1) 소분류 → ① 제목 / 사업부장 → - 내용, (그 밖) 1) 제목 / 사업부장 → - 내용
  * 사람이 여러 팀 안건을 묶고 문장을 다듬어 보내므로, 이것은 초안이다. 주인팀장이 화면에서 고친 뒤 보낸다 */
@@ -1105,12 +1140,15 @@ function autoFb(src){
 /* ---------- 화면: 팀장 입력 ---------- */
 function vInput(){
   const a = S.active, name = isLead() ? S.roleTeam : S.inTeam, sub = a.subs[name], prev = S.weeks[0];
-  const mine = a.items.filter(i => i.team === name), carriedN = mine.filter(i => i.carried).length;
+  if (isLead() && !name) return `<div class="note" style="margin-top:24px">먼저 위쪽 <b>내 팀</b> 칸에서 소속 팀을 골라 주세요. 이 브라우저가 기억해 두어 다음부터는 바로 열립니다.</div>`;
+  const mine = a.items.filter(i => i.team === name), carriedN = mine.filter(i => i.carried).length, lost = (S.ui.lost || {})[name];
   let h = `<div class="row" style="margin-top:30px"><h3 style="font-size:20px">팀장 입력</h3>
     ${isLead() ? `<span class="pill on">${esc(name)}</span>` : `<select data-ch="inTeam" aria-label="팀 고르기">${S.teams.map(t => `<option value="${esc(t.name)}" ${t.name===name?'selected':''}>${esc(t.name)}${a.subs[t.name] ? ' (제출)' : ''}</option>`).join('')}</select>`}
     <span class="state ${sub ? (a.late[name] ? 'late' : 'ok') : 'no'}">${sub ? (a.late[name] ? '마감 후 제출 ' : '제출 완료 ') + esc(sub) : (locked() ? '미제출 확정' : '미제출')}</span>
     <span class="sp"></span><span class="pill">마감 <b>${fmt(deadline())} ${dlT()}</b></span></div>
     <p class="lead">지난 주(${esc(prev.label)})에 쓴 내용이 그대로 들어 있습니다. 바뀐 부분만 고치고 제출하세요. 해당 없는 분류는 없음에 체크합니다.${carriedN ? ' 아직 손대지 않은 안건이 ' + carriedN + '건 있습니다.' : ''}</p>`;
+  if (lost) h += `<div class="lost"><b>${esc(lost.at)}에 다른 사람이 이 팀을 먼저 저장해서, 내가 쓰던 내용 대신 최신 내용이 들어왔습니다.</b> 내가 쓴 내용은 아래에 남겨 두었습니다. 필요한 부분을 복사해 넣으세요.
+    <textarea readonly aria-label="내가 쓴 내용">${esc(lost.text)}</textarea><button class="btn sm" data-act="lostClose" data-t="${esc(name)}">확인, 닫기</button></div>`;
   const lf = ((prev.fb || {})[name] || []);
   if (lf.length) h += `<div class="lastfb"><b>지난 주(${esc(prev.label)}) 본부미팅 피드백</b>${prev.fbDemo ? ' <span class="tag demo">화면 확인용 예시</span>' : ''}<ul>${lf.map(x => `<li>${esc(x)}</li>`).join('')}</ul></div>`;
   if (locked() && !sub) h += `<div class="note warn" style="margin-bottom:12px">마감이 지났습니다. 지금 제출하면 점검, 공지 화면에 마감 후 추가로 따로 표시됩니다.</div>`;
@@ -1130,7 +1168,8 @@ function vInput(){
   });
   h += `<div class="row" style="margin-top:18px"><button class="btn pri" data-act="submit" data-t="${esc(name)}">${sub ? '다시 제출' : '제출'}</button>
     ${sub ? `<button class="btn ghost" data-act="unsubmit" data-t="${esc(name)}">제출 취소</button>` : ''}
-    <button class="btn ghost" data-act="recarry" data-t="${esc(name)}">지난 주 내용으로 되돌리기</button><span class="err">${esc(S.ui.err || '')}</span></div>`;
+    <button class="btn ghost" data-act="recarry" data-t="${esc(name)}">지난 주 내용으로 되돌리기</button><span class="err">${esc(S.ui.err || '')}</span></div>
+    ${carriedN && !sub ? `<div class="small mute" style="margin-top:6px">지난 주와 같은 내용 ${carriedN}건이 고치지 않은 채로 제출됩니다. 바뀐 것이 없으면 그대로 제출해도 됩니다.</div>` : ''}`;
   return h;
 }
 
@@ -1197,8 +1236,10 @@ function vMailBox(type, i, defOpen){
   const a = S.active, m = mailOf(type), rs = (a.resv || {})[i], view = (S.ui.mv || {})[type] !== 'edit', ms = missOf(a.label), hasAddr = /@/.test(m.to);
   const none = type === 'remind' && !scopeTeams(S.ui.chk || '').some(n => !a.subs[n]), k = 'mo_' + type, open = S.ui[k] === undefined ? !!defOpen : S.ui[k];
   const hint = type === 'report' ? '사업부별 점검에서 뺀 안건은 빠지고, 정한 순서대로 들어갑니다.' : '지금 제출 현황 기준입니다. 보내는 시점의 숫자로 다시 채워집니다.';
+  /* 고친 초안이 그 뒤 바뀐 제출, 점검 내용을 놓치고 있는지 */
+  const fresh = m.dirty ? mailDraft(type, a.label) : null, stale = !!(fresh && m.base && (m.base.body !== fresh.body || m.base.to !== fresh.to));
   return `<details class="mbox" ${open ? 'open' : ''} data-tg="${k}"><summary><b>${stT(i)} ${MAILS[type]}</b><span class="tag ${rs ? 't-new' : ''}">${rs ? '예약됨' : '예약 전'}</span>${m.dirty ? '<span class="tag demo">직접 고친 내용</span>' : ''}<span class="sm">${none ? '지금은 보낼 대상이 없습니다' : esc(m.subject)}</span></summary>
-    <div class="in form">${none ? `<div class="note" style="margin-top:12px">이 범위의 팀이 모두 제출해서 알람을 보낼 대상이 없습니다.</div>` : `
+    <div class="in form">${stale ? `<div class="note warn" style="margin-top:12px">본문을 고친 뒤에 제출이나 점검 내용이 바뀌었습니다. 지금 초안에는 그 변화가 빠져 있습니다. 반영하려면 [내용 다시 만들기]를 누르세요(직접 고친 부분은 사라집니다).</div>` : ''}${none ? `<div class="note" style="margin-top:12px">이 범위의 팀이 모두 제출해서 알람을 보낼 대상이 없습니다.</div>` : `
       <label for="mTo_${type}">받는 사람</label><input id="mTo_${type}" class="inp" value="${esc(m.to)}" data-in="mail" data-t="${type}" data-k="to">
       ${hasAddr ? '' : `<div class="small" style="color:var(--red);font-weight:700;margin-top:4px">이름만 들어 있습니다. 설정에 메일 주소를 저장해 두면 주소로 채워집니다.</div>`}
       <label for="mCc_${type}">참조</label><input id="mCc_${type}" class="inp" value="${esc(m.cc)}" data-in="mail" data-t="${type}" data-k="cc">
@@ -1207,8 +1248,9 @@ function vMailBox(type, i, defOpen){
       ${view ? `<div class="mprev" id="mPv_${type}">${mailHtml(m.body)}</div>` : `<textarea id="mBd_${type}" class="mb-body" aria-label="본문" data-in="mail" data-t="${type}" data-k="body">${esc(m.body)}</textarea>`}
       ${type === 'report' ? `<div class="opts"><label><input type="checkbox" data-ch="mset" data-k="mailMiss" ${S.set.mailMiss !== false ? 'checked' : ''}> 미제출 팀 한 줄 넣기</label><label><input type="checkbox" data-ch="mset" data-k="mailSum" ${S.set.mailSum ? 'checked' : ''}> 긴 안건은 요약본으로 넣기</label></div>` : ''}
       <div class="small mute" style="margin-top:8px">${hint}</div>
-      <div class="row" style="margin-top:12px"><button class="btn pri" data-act="mailCopy" data-t="${type}">서식 그대로 복사</button><button class="btn" data-act="send" data-t="${type}">메일 창 열기</button><button class="btn ghost" data-act="mailReset" data-t="${type}">내용 다시 만들기</button>
-        <button class="btn tog" aria-pressed="${!!rs}" data-act="resv" data-i="${i}">${rs ? '예약해 둠 (' + esc(rs) + ')' : '예약해 둠으로 표시'}</button></div>`}</div></details>`;
+      <div class="row" style="margin-top:12px"><button class="btn" data-act="mailCopy" data-t="${type}">서식 그대로 복사</button><button class="btn" data-act="send" data-t="${type}">메일 창 열기</button><button class="btn ghost" data-act="mailReset" data-t="${type}">내용 다시 만들기</button></div>
+      <div class="row" style="margin-top:10px"><button class="btn ${rs ? 'tog' : 'pri'}" aria-pressed="${!!rs}" data-act="resv" data-i="${i}" ${R.state === 'fail' ? 'disabled title="저장이 안 된 상태에서는 예약할 수 없습니다"' : ''}>${rs ? '예약됨 (' + esc(rs) + ') · 누르면 예약 취소' : stT(i) + ' 발송 예약'}</button>
+        <span class="small mute">${R.on ? '예약하면 ' + stT(i) + '에 이 내용 그대로 자동으로 보냅니다.' : '예약 표시만 남깁니다.'}</span></div>`}</div></details>`;
 }
 function vTpl(){
   return `<div class="card form" style="margin-top:16px"><div class="row"><h3>미제출 알람 메일 양식</h3><span class="sp"></span><button class="btn sm ghost" data-act="tplReset">기본 양식으로</button></div>
@@ -1247,7 +1289,7 @@ function vSettings(){
       <div class="card form" style="margin-top:16px"><h3>분류와 소분류</h3>
         ${S.cats.map((c,i) => `<label for="cs${i}">${esc(c.name)}</label><input id="cs${i}" class="inp" value="${esc(c.subs.join(', '))}" data-in="subs" data-i="${i}">`).join('')}
         <div class="small mute" style="margin-top:8px">쉼표로 나눠 씁니다. 바꾸면 팀장 입력의 소분류에 바로 반영됩니다.</div></div>
-      <div class="card" style="margin-top:16px"><h3>데이터 백업</h3><div class="small mute" style="margin:6px 0 10px">입력 내용은 이 브라우저에만 저장됩니다. 다른 PC로 옮기거나 보관하려면 파일로 내보냅니다.</div>
+      <div class="card" style="margin-top:16px"><h3>데이터 백업</h3><div class="small mute" style="margin:6px 0 10px">${R.on ? '입력 내용은 구글 시트에 저장됩니다. 파일은 보관용 백업입니다. 파일에서 가져오면 시트의 모든 팀 내용이 그 파일 내용으로 바뀌니 주의하세요.' : '입력 내용은 이 브라우저에만 저장됩니다. 다른 PC로 옮기거나 보관하려면 파일로 내보냅니다.'}</div>
         <div class="row"><button class="btn" data-act="export">파일로 내보내기</button><button class="btn" data-act="import">파일에서 가져오기</button><input type="file" id="imp" accept=".json,application/json" hidden></div></div>
       <div class="card" style="margin-top:16px"><h3>메일 발송, 예약 이력</h3><div class="log" style="margin-top:8px">${S.sent.length ? S.sent.map(x => `<div><span>${esc(x.ts)}</span><b>${esc(MAILS[x.type] || x.type)}</b> ${esc(x.week)}<br><span>${esc(x.how)}</span>${esc((x.to || '').slice(0,60))}</div>`).join('') : '<div class="mute">아직 기록이 없습니다.</div>'}</div></div>
       <div class="card" style="margin-top:16px"><h3>활동 기록</h3><div class="log" style="margin-top:8px">${S.log.length ? S.log.map(l => `<div><span>${esc(l.ts || '')}</span><span>${esc(l.at)}</span>${esc(l.msg)}</div>`).join('') : '<div class="mute">아직 기록이 없습니다. 단계를 넘기거나 팀이 제출하면 쌓입니다.</div>'}</div></div>
@@ -1259,7 +1301,9 @@ function render(){
   const views = {in:vIn, chk:vChk, pub:vPub, mtg:vMtg, history:vHistory, settings:vSettings};
   if (!views[S.tab] || (S.tab === 'settings' && !canManage())) S.tab = nowTab();
   const isPh = PH.some(p => p.id === S.tab);
-  document.getElementById('app').innerHTML = vTop() + `<main class="wrap ${isPh ? '' : 'util'}">${isPh ? vWeek() : ''}<div class="sheet">${views[S.tab]()}</div></main>` + (S.ui.paper ? vPaper() : '');
+  const top = !isPh ? '' : (R.on && isLead()) ? vLeadBar() : vWeek();
+  document.getElementById('app').innerHTML = vTop() + `<main class="wrap ${isPh ? '' : 'util'}">${top}<div class="sheet">${views[S.tab]()}</div></main>` + (S.ui.paper ? vPaper() : '');
+  if (R.on) srvState(R.state);
   save();
 }
 /* 시점이 바뀔 때, 보고 있던 화면이 '지금 단계'였으면 새 단계 화면으로 따라간다 */
@@ -1328,6 +1372,10 @@ const A = {
   reset(){ if (R.on) return false; try{ localStorage.removeItem(LS); }catch(e){} boot(); toast('처음 상태로 되돌렸습니다'); },
   stg(d){ const i = +d.i; S.ui.stg = S.ui.stg === i ? null : i; },
   resv(d){ const a = S.active, i = +d.i, nm = stT(i) + ' ' + MAILS[STAGES[i].mail]; a.resv = a.resv || {};
+    /* 서버 모드에서 예약은 실제 자동 발송으로 이어지므로 한 번 묻는다 */
+    if (!a.resv[i] && R.ready){ const ms = missOf(a.label), org = S.set.org || [], unfin = org.filter(o => !(a.fin || {})[o.head]).length;
+      const q = STAGES[i].mail === 'report' ? '점검 안 마친 사업부 ' + unfin + '곳, 미제출 ' + ms.none.length + '팀입니다.\n' + stT(i) + '에 지금 화면의 보고 메일 내용 그대로 보냅니다. 예약할까요?' : '미제출 ' + ms.none.length + '팀에 ' + stT(i) + ' 알람을 보냅니다. 예약할까요?';
+      if (!confirm(q)) return false; }
     if (a.resv[i]){ delete a.resv[i]; log(nm + ' 메일 예약 표시 해제'); toast('예약 표시를 풀었습니다'); }
     else { a.resv[i] = stamp(); log(nm + ' 메일 예약해 둠으로 표시'); S.sent.unshift({ts:stamp(), type:STAGES[i].mail, week:a.label, how:'예약해 둠으로 표시, ' + stT(i) + ' 발송', to:''}); toast(nm + ' 메일을 예약해 둠으로 표시했습니다'); } },
   stage(d){ const i = +d.i; if (realBlock() || !canManage()) return false; if (i > S.active.stage){ advance(i); toast(stName(i)); } else if (i < S.active.stage){ S.active.stage = i; log('단계 되돌림: ' + stName(i)); toast(stName(i) + ' 시점으로 되돌렸습니다'); } },
@@ -1352,9 +1400,13 @@ const A = {
     S.cats.forEach(c => { const list = a.items.filter(i => i.team === n && i.cat === c.id); if (!list.length && !(a.none[n] || {})[c.id]) errs.push(c.name + ': 안건을 쓰거나 없음에 체크해 주세요'); if (list.some(i => !i.title.trim())) errs.push(c.name + ': 제목이 빈 안건이 있습니다'); });
     if (errs.length){ S.ui.err = errs[0] + (errs.length > 1 ? ' 외 ' + (errs.length - 1) + '건' : ''); return; }
     S.ui.err = ''; a.subs[n] = stT(a.stage); if (locked()) a.late[n] = true; else delete a.late[n]; if (a.stage >= 3) (a.fix = a.fix || {})[n] = stamp();
-    log(n + ' 제출' + (locked() ? ' (마감 후 추가)' : '')); toast(n + ' 제출 완료. 점검, 공지 화면에 반영되었습니다.');
+    log(n + ' 제출' + (locked() ? ' (마감 후 추가)' : ''));
+    /* 서버 모드: 바로 저장하고, 저장이 끝난 뒤에 완료를 알린다 */
+    if (R.ready){ R.afterSave = n + ' 제출이 저장되었습니다.'; toast('제출 저장 중…'); setTimeout(srvPush, 0); }
+    else toast(n + ' 제출 완료. 점검, 공지 화면에 반영되었습니다.');
   },
-  unsubmit(d){ delete S.active.subs[d.t]; delete S.active.late[d.t]; log(d.t + ' 제출 취소'); },
+  unsubmit(d){ delete S.active.subs[d.t]; delete S.active.late[d.t]; log(d.t + ' 제출 취소'); if (R.ready){ R.afterSave = d.t + ' 제출 취소가 저장되었습니다.'; setTimeout(srvPush, 0); } },
+  lostClose(d){ if (S.ui.lost) delete S.ui.lost[d.t]; },
   fbEdit(d){ S.ui.fbEdit = d.id; },
   fbCancel(){ S.ui.fbEdit = ''; },
   fbSave(d){ const f = S.fb.find(x => x.id === d.id), g = id => document.getElementById(id).value.trim(); if (!f || !g('feX')) return false;
@@ -1427,7 +1479,12 @@ document.addEventListener('change', e => {
   if (el.id === 'trFile'){ readTranscript(el.files[0]); return; }
   if (d.ch === 'role'){ if (R.role === 'input'){ el.value = 'lead'; return; } S.role = el.value; S.ui.hd = ''; }
   else if (d.ch === 'clock'){ S.set.clock = el.value; log('단계 기준 변경: ' + (el.value === 'real' ? '실제 시계 따르기' : '직접 넘기기')); tick(); }
-  else if (d.ch === 'roleTeam'){ S.roleTeam = el.value; }
+  else if (d.ch === 'roleTeam'){
+    /* 팀장 키: 처음 고른 팀을 내 팀으로 기억하고, 다른 팀으로 바꿀 때는 한 번 묻는다 (사업부장 이상은 관리 키라 묻지 않음) */
+    if (R.role === 'input'){ const me = myTeam();
+      if (!me || !S.teams.some(t => t.name === me)) setMyTeam(el.value);
+      else if (el.value !== me && !confirm(el.value + ' 팀 안건을 고치게 됩니다. 내 팀(' + me + ')이 아닙니다. 계속할까요?')){ el.value = S.roleTeam; return; } }
+    S.roleTeam = el.value; S.ui.err = ''; }
   else if (d.ch === 'inTeam'){ S.inTeam = el.value; S.ui.err = ''; }
   else if (d.ch === 'fbTeam'){ S.ui.fbTeam = el.value; }
   else if (d.ch === 'hteam'){ S.ui.hteam = el.value; }
@@ -1455,7 +1512,7 @@ document.addEventListener('input', e => {
   else if (d.in === 'tr'){ S.ui.tr = el.value; }
   else if (d.in === 'q'){ S.ui.q = el.value; return; }
   else if (d.in === 'set'){ S.set[d.k] = el.value; if (d.k === 'rs' || d.k === 'rb'){ const pv = document.getElementById('tplPv'); if (pv) pv.innerHTML = tplPv(); if (S.md){ delete S.md.all; delete S.md.remind; } } }
-  else if (d.in === 'mail'){ S.md = S.md || {}; if (!S.md[d.t] || !S.md[d.t].dirty || S.md[d.t].week !== S.active.label) S.md[d.t] = Object.assign({}, mailDraft(d.t, S.active.label), {dirty:true}); S.md[d.t][d.k] = el.value; }
+  else if (d.in === 'mail'){ S.md = S.md || {}; if (!S.md[d.t] || !S.md[d.t].dirty || S.md[d.t].week !== S.active.label) { const f = mailDraft(d.t, S.active.label); S.md[d.t] = Object.assign({}, f, {dirty:true, base:{body:f.body, to:f.to}}); } S.md[d.t][d.k] = el.value; }
   else if (d.in === 'tmail'){ S.teams[+d.i].mail = el.value.trim(); }
   else if (d.in === 'subs'){ S.cats[+d.i].subs = el.value.split(',').map(s => s.trim()).filter(Boolean); }
   else if (d.in === 'note'){ const n = (S.active.notes || []).find(x => x.id === d.id); if (n) n.text = el.value; }

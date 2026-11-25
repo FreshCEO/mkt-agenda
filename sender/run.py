@@ -75,7 +75,29 @@ def run_aside(M, send):
     return out
 
 
+LOCK = ROOT / 'sender' / 'run.real.lock'
+# 웍스 쪽 결과: 이 문구가 나오면 확실히 '보내지 않음'이다. '보냄'도 아니고 이것도 아니면 '보냈는지 모름'으로 본다
+NOT_SENT = ['확인 실패: 보내지 않음', '로그인 필요', '로그인 실패', 'Could not connect', '메일쓰기 창 개수', 'aside 실행 실패']
+
+
+def take_lock():
+    """작업 스케줄러가 겹쳐 실행해도 한 번에 하나만 돈다. 20분 넘은 잠금은 죽은 것으로 본다."""
+    try:
+        if LOCK.exists() and (dtm.datetime.now().timestamp() - LOCK.stat().st_mtime) < 1200: return False
+        LOCK.write_text(str(os.getpid()), encoding='utf-8'); return True
+    except Exception:
+        return False
+
+
 async def main():
+    if not take_lock(): say('건너뜀: 다른 발송기가 실행 중'); return 0
+    try: return await _main()
+    finally:
+        try: LOCK.unlink()
+        except Exception: pass
+
+
+async def _main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--dry', action='store_true'); ap.add_argument('--now'); ap.add_argument('--page')
     A = ap.parse_args()
@@ -111,6 +133,12 @@ async def main():
             if not c['resv']: say('건너뜀(예약 안 됨):', tag); continue
             if late < 0: say('아직 시각 전:', tag); continue
             if c['done'] or key in L['sent']: say('이미 보냄:', tag); continue
+            if L['sent'].get(key + '|uncertain') or L['sent'].get(key + '|pending'):
+                say('건너뜀(지난번 결과를 모름, 사람 확인 필요):', tag)
+                if not L['sent'].get(key + '|uncertain'):
+                    L['sent'][key + '|uncertain'] = now.isoformat(timespec='minutes'); save_ledger(L)
+                    await note('자동 발송 결과 확인 필요: ' + c['name'] + '. 지난 실행이 중간에 끝났습니다. 받은 메일함을 확인해 주세요. 다시 보내지 않습니다.')
+                continue
             if late > CONF.get('late_limit_min', 180):
                 if L['sent'].get(key + '|missed'): continue
                 say('놓침(시각이 너무 지남, 보내지 않음):', tag)
@@ -125,17 +153,29 @@ async def main():
             M = {'to': CONF['test_to'], 'from': CONF['from'], 'subject': subject, 'text': text}
             say('보낼 것:', tag, '| 고친 초안' if c['edited'] else '| 자동 초안', '| 받는 사람(시험) 1곳')
             if A.dry: continue
+            # 보내기 전에 '진행 중'을 먼저 적는다. 실행이 중간에 죽어도 다음 실행이 다시 보내지 않게
+            L['sent'][key + '|pending'] = now.isoformat(timespec='minutes'); save_ledger(L)
             out = run_aside(M, True)
-            ok = '보냄' in out and '보내기 실패' not in out
+            ok = '보냄' in out and '보내기 실패' not in out and '확인 실패' not in out
+            not_sent = not ok and any(s in out for s in NOT_SENT) and '보내기 실패' not in out
             checks = next((l for l in out.splitlines() if l.startswith('{"붙여넣기처리"')), '')
+            L['sent'].pop(key + '|pending', None)
             if ok:
                 L['sent'][key] = now.isoformat(timespec='minutes'); L['days'][today] = sent_today = sent_today + 1; save_ledger(L)
                 say('보냄:', tag)
-                await note('자동 발송(시험): ' + c['name'] + ' → 시험 주소 1곳', {'type': c['type'], 'week': c['week'], 'how': '자동 발송(시험), 실제 받는 사람 대신 시험 주소', 'to': c['to']})
+                rec = {'type': c['type'], 'week': c['week'], 'how': '자동 발송(시험), 실제 받는 사람 대신 시험 주소', 'to': c['to']}
+                await note('자동 발송(시험): ' + c['name'] + ' → 시험 주소 1곳', rec)
+                # 서버에 이력이 실제로 남았는지 확인 (충돌로 빠졌으면 한 번 더)
+                if not await pg.evaluate("([w, t]) => (S.sent || []).some(x => x.week === w && x.type === t && /자동 발송/.test(x.how || ''))", [c['week'], c['type']]):
+                    say('주의: 발송 이력이 서버에서 빠져 다시 적음'); await note('자동 발송 이력 다시 기록: ' + c['name'], rec)
+            elif not_sent:
+                save_ledger(L); rc = 1
+                say('보내지 않음(다음 실행 때 다시):', tag, '|', checks[:300] or out.strip().splitlines()[-1:])
+                await note('자동 발송 실패(보내지 않음): ' + c['name'] + '. 웍스 로그인이나 메일쓰기 확인이 필요합니다. 다음 실행 때 다시 시도합니다.')
             else:
-                rc = 1
-                say('보내기 실패:', tag, '|', checks[:300] or out.strip().splitlines()[-1:] )
-                await note('자동 발송 실패: ' + c['name'] + '. 웍스 로그인이나 메일쓰기 확인이 필요합니다. 다음 실행 때 다시 시도합니다.')
+                L['sent'][key + '|uncertain'] = now.isoformat(timespec='minutes'); save_ledger(L); rc = 1
+                say('결과 모름(다시 보내지 않음):', tag, '|', checks[:300] or out.strip().splitlines()[-2:])
+                await note('자동 발송 결과 확인 필요: ' + c['name'] + '. 보내졌는지 확실하지 않습니다. 받은 메일함을 확인해 주세요. 다시 보내지 않습니다.')
         if errs: say('화면 오류:', errs[:3])
         await b.close()
     return rc

@@ -6,7 +6,7 @@ for (const t of (await listBrowserTabs()).filter(t => /write\/popup/.test(t.url 
 await sleep(800);
 // 메일함 열기. 로그인이 풀려 있으면 저장된 값으로 채워진 경우에만 [로그인] 버튼을 누른다 (값을 입력하거나 읽지 않는다)
 const pm = await openTab('https://mail.worksmobile.com/'); await sleep(3000);
-if (/sr\.daewoong|auth\.worksmobile/.test(pm.url())) {
+if (!/^mail\.worksmobile\.com$/.test(new URL(pm.url()).host)) {   // 메일함이 아니면 로그인 화면으로 본다
   const ls = await snapshot(pm, { interactive: true });
   const filled = /textbox "아이디 입력"[^\n]*: "/.test(ls.tree) && /textbox "비밀번호 입력"[^\n]*: "/.test(ls.tree);
   if (!filled) throw new Error('로그인 필요: 자동 채움 안 됨');
