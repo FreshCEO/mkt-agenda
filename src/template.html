@@ -580,11 +580,14 @@ function srvSchedule(){ clearTimeout(R.t); R.t = setTimeout(srvPush, 1200); }
 async function srvPush(){
   if (!R.ready) return; if (R.busy){ R.again = true; return; }
   const {cur, keys} = srvChanged(), logs = R.logs.splice(0);
-  if (!keys.length && !logs.length){ if (R.state === 'fail') srvState('saved'); return; }
+  /* 관리 키: 화면에 더는 없는 팀 조각은 서버에서도 지운다 (데이터를 통째로 가져왔을 때) */
+  const drop = R.role === 'admin' ? Object.keys(R.last).filter(k => k.indexOf('team:') === 0 && !(k in cur)) : [];
+  if (!keys.length && !logs.length && !drop.length){ if (R.state === 'fail') srvState('saved'); return; }
   R.busy = true; srvState('saving');
   try{
-    const d = await srvCall('put', {slices:keys.map(k => ({k, ver:R.ver[k] || 0, json:cur[k]})), logs:logs.map(x => ({msg:x.msg}))});
+    const d = await srvCall('put', {slices:keys.map(k => ({k, ver:R.ver[k] || 0, json:cur[k]})), logs:logs.map(x => ({msg:x.msg})), drop});
     keys.forEach(k => { if (d.vers[k] != null){ R.ver[k] = d.vers[k]; R.last[k] = cur[k]; } });
+    (d.dropped || []).forEach(k => { delete R.ver[k]; delete R.last[k]; });
     if (d.conflicts.length){ d.conflicts.forEach(c => { R.ver[c.k] = c.ver; R.last[c.k] = c.json; }); srvApply(d.conflicts.map(c => c.k)); }
     srvLog(d.log); R.at = stampNow(); R.busy = false; srvState('saved');
     if (d.conflicts.length){ render(); toast('다른 사람이 먼저 고친 내용이 있어 최신 내용으로 바꿨습니다. 다시 확인해 주세요.'); }

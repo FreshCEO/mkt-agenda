@@ -83,8 +83,15 @@ function opGet(role, args) {
 }
 
 function opPut(role, who, args) {
-  const map = readStore(), vers = {}, conflicts = [], denied = [];
-  let teamTouched = false;
+  let map = readStore(), teamTouched = false;
+  const vers = {}, conflicts = [], denied = [], dropped = [];
+  // 관리 키만: 화면에 더는 없는 팀 조각을 먼저 지운다 (데이터를 통째로 바꿨을 때). 아래쪽 줄부터 지워 줄 번호가 밀리지 않게 한다
+  if (role === 'admin') {
+    const sent = new Set((args.slices || []).map(x => String(x.k || '')));
+    const gone = (args.drop || []).map(String).filter(k => /^team:.+/.test(k) && map[k] && !sent.has(k));
+    gone.sort((x, y) => map[y].row - map[x].row).forEach(k => { storeSheet().deleteRow(map[k].row); dropped.push(k); });
+    if (dropped.length) { map = readStore(); teamTouched = true; }
+  }
   (args.slices || []).forEach(x => {
     const k = String(x.k || '');
     if (!/^(core|team:.+)$/.test(k)) return;
@@ -96,13 +103,14 @@ function opPut(role, who, args) {
     if (k.indexOf('team:') === 0) teamTouched = true;
   });
   const ls = logSheet(), now = new Date(), rows = [];
+  dropped.forEach(k => rows.push([now, who, role, 'drop', k]));
   (args.logs || []).slice(0, 50).forEach(l => rows.push([now, who, role, 'log', String(l.msg || '').slice(0, 500)]));
   Object.keys(vers).forEach(k => rows.push([now, who, role, 'save', k + ' v' + vers[k]]));
   conflicts.forEach(c => rows.push([now, who, role, 'conflict', c.k]));
   denied.forEach(k => rows.push([now, who, role, 'denied', k]));
   if (rows.length) ls.getRange(ls.getLastRow() + 1, 1, rows.length, 5).setValues(rows);
   if (teamTouched || vers.core) { try { rebuildView(map); } catch (e) { ls.appendRow([now, who, role, 'view-error', String(e)]); } }
-  return { vers, conflicts, denied, log: recentLog(150) };
+  return { vers, conflicts, denied, dropped, log: recentLog(150) };
 }
 
 function recentLog(n) {

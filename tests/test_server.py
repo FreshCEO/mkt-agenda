@@ -23,7 +23,10 @@ def handle(body):
         json.loads(x['json'])
         store[k] = {'ver': (cur['ver'] if cur else 0) + 1, 'json': x['json']}; vers[k] = store[k]['ver']
     logs.extend((q.get('who'), l.get('msg')) for l in a.get('logs') or [])
-    return {'ok': True, 'data': {'vers': vers, 'conflicts': conf, 'denied': den, 'log': []}}
+    sent = {x['k'] for x in a.get('slices') or []}
+    dropped = [k for k in (a.get('drop') or []) if role == 'admin' and k.startswith('team:') and k in store and k not in sent]
+    for k in dropped: del store[k]
+    return {'ok': True, 'data': {'vers': vers, 'conflicts': conf, 'denied': den, 'dropped': dropped, 'log': []}}
 
 async def route(r):
     await r.fulfill(status=200, content_type='application/json', headers={'Access-Control-Allow-Origin': '*'}, body=json.dumps(handle(r.request.post_data)))
@@ -88,7 +91,11 @@ async def main():
         await pa.context.unroute('https://script.google.com/**'); await pa.context.route('https://script.google.com/**', route)
         await pa.click('#sync button[data-sy=retry]'); await pa.wait_for_timeout(1500)
         ok.append(('다시 저장 성공', any(i['title'] == '실패 뒤 다시' for i in team_item(team)) and '저장됨' in await pa.inner_text('#sync')))
-        # 9. #off 로 연결 해제 -> 예시 모드
+        # 9. 관리 화면에서 데이터를 통째로 바꾸면(팀 하나가 빠지면) 그 팀 조각이 서버에서 지워짐
+        gone = await pa.evaluate("() => { const n = S.teams[S.teams.length - 1].name; S.teams.pop(); S.active.items = S.active.items.filter(i => i.team !== n); ['none','subs','late','fix'].forEach(f => delete (S.active[f] || {})[n]); render(); return n; }")
+        await pa.wait_for_timeout(2000)
+        ok.append(('빠진 팀 조각 삭제', 'team:' + gone not in store and await pa.evaluate("n => !('team:' + n in R.last)", gone)))
+        # 10. #off 로 연결 해제 -> 예시 모드
         pc = await pa.context.new_page(); await pc.goto((ROOT / 'dist/index.html').as_uri() + '#off'); await pc.wait_for_timeout(600)
         ok.append(('#off 로 예시 모드', await pc.locator('#sync').count() == 0 and await pc.locator('[data-act=reset]').count() == 1))
         ok.append(('스크립트 오류 없음', not ea and not eb))
