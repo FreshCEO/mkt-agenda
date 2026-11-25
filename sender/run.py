@@ -150,7 +150,7 @@ async def _main():
             if sent_today >= CONF.get('cap_per_day', 4): say('멈춤: 오늘 발송 상한', sent_today); rc = 1; break
             subject = '[시험] ' + c['subject']
             text = '[시험 발송] 실제 받는 사람: ' + (c['to'] or '-') + ' / 참조: ' + (c['cc'] or '-') + '\n\n' + c['body']
-            M = {'to': CONF['test_to'], 'from': CONF['from'], 'subject': subject, 'text': text, 'bold': '■'}
+            M = {'to': CONF['test_to'], 'from': CONF['from'], 'subject': subject, 'text': text, 'bold': '■', 'sign': '본부미팅알람'}
             say('보낼 것:', tag, '| 고친 초안' if c['edited'] else '| 자동 초안', '| 받는 사람(시험) 1곳')
             if A.dry: continue
             # 보내기 전에 '진행 중'을 먼저 적는다. 실행이 중간에 죽어도 다음 실행이 다시 보내지 않게

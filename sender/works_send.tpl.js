@@ -25,6 +25,14 @@ if (M.from) {
 const fromNow = await pw.getByRole('textbox', { name: '보내는 주소' }).inputValue();
 const nameNow = await pw.getByRole('textbox', { name: '보내는 이름' }).inputValue();
 const body = pw.frameLocator('iframe').first().locator('body');
+// M.sign: 웍스 서명 메뉴에서 그 이름의 서명으로 바꾼다 (개인 명함 대신). 편집기에서 지우면 보낼 때 다시 붙으므로 메뉴로 바꾼다
+let signSwitched = !M.sign;
+if (M.sign) {
+  await pw.getByRole('button', { name: '서명', exact: true }).click(); await sleep(800);
+  await pw.getByRole('link', { name: M.sign, exact: true }).first().click(); await sleep(1200);
+  const st = await body.evaluate(b => { const s = b.querySelector('[data-workseditor=sign-content]'); return s ? s.textContent.replace(/\s+/g, ' ').trim() : ''; });
+  signSwitched = st.includes(M.sign) && st.length < M.sign.length + 40;
+}
 const signBefore = await body.evaluate(b => { const s = b.querySelector('[data-workseditor=sign-content]'); return s ? s.textContent : null; });
 const toBox = pw.getByRole('combobox', { name: '받는사람' });
 await toBox.click(); await toBox.fill(M.to); await toBox.press('Enter');
@@ -58,7 +66,9 @@ const toOK = snap.tree.includes('text: "' + M.to + '"');
 const checks = { 붙여넣기처리: handled, 본문일치: diff < 0, 본문줄: got.length + '/' + exp.length, 서명그대로: r.signText === signBefore, 글자크기14: r.sizes && r.sizes.length === 1 && r.sizes[0] === '14px', 글꼴: r.fonts, 받는사람1명: chips === 1 && toOK, 제목일치: subjOK, 보내는주소: fromNow, 보내는이름: nameNow, 보내는주소일치: !M.from || fromNow === M.from, 굵게: boldIdx.length + '줄', 굵게확인: weights.bold.every(x => x >= 600) && weights.others === 0 };
 console.log(JSON.stringify(checks));
 if (diff >= 0) console.log('첫 차이 줄', diff, JSON.stringify(String(got[diff]).slice(0, 50)), '/', JSON.stringify(String(exp[diff]).slice(0, 50)));
-const pass = handled && diff < 0 && checks.서명그대로 && checks.글자크기14 && checks.받는사람1명 && subjOK && checks.보내는주소일치 && checks.굵게확인;
+checks.서명바꿈 = signSwitched;
+console.log(JSON.stringify({ 서명: M.sign || '(기본)', 서명바꿈: signSwitched, 서명내용: String(r.signText || '').replace(/\s+/g, ' ').trim().slice(0, 40) }));
+const pass = handled && diff < 0 && checks.서명그대로 && checks.글자크기14 && checks.받는사람1명 && subjOK && checks.보내는주소일치 && checks.굵게확인 && signSwitched;
 if (!pass) { console.log('확인 실패: 보내지 않음'); }
 else if (!SEND) { console.log('확인 통과 (보내지 않는 시험 실행)'); }
 else {
