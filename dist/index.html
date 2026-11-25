@@ -380,7 +380,8 @@ table.st{width:100%;border-collapse:collapse;font-size:14px}
 .tb span{font-size:12.5px;color:var(--mute);font-weight:600}
 .tb em{font-style:normal;font-size:13px;font-weight:800}
 .tb i{font-style:normal;font-size:12.5px;color:var(--red);font-weight:700}
-.tb.ok{border-left-color:var(--ok)} .tb.ok em{color:var(--ok)}
+.tb.ok{border-left-color:#156b39;background:#dff3e5;border-color:#7cc394} .tb.ok em{color:#fff;background:#156b39;border-radius:999px;padding:1px 10px;justify-self:start}
+.tb.ok em::before{content:'✓ '}
 .tb.no{border-left-color:var(--red);background:var(--red-bg);border-color:var(--red-line)} .tb.no em{color:var(--red)}
 .tb.late{border-left-color:#e3c46e;background:#fdf5dc} .tb.late em{color:#5e4a12}
 .tb.sel{outline:3px solid var(--pepper);outline-offset:1px}
@@ -987,8 +988,8 @@ function mailParts(it){
 }
 /* 실제 보고 메일 양식: 1. 분류 → (CVO) 1) 소분류 → ① 제목 / 사업부장 → - 내용, (그 밖) 1) 제목 / 사업부장 → - 내용
  * 사람이 여러 팀 안건을 묶고 문장을 다듬어 보내므로, 이것은 초안이다. 주인팀장이 화면에서 고친 뒤 보낸다 */
-/* 분류 제목: '1. 이름(소분류/소분류)'. 첫 분류(cvo)는 소분류를 붙이지 않는다. 실제 이름은 데이터에서 읽는다 */
-const mailCat = (c, i) => (i + 1) + '. ' + (c.mailName || c.name) + (c.id === 'cvo' ? '' : '(' + (c.id === 'hr' ? '본부 내 ' : '') + c.subs.join('/') + ')');
+/* 분류 제목: '■ 이름(소분류/소분류)', 메일에서는 굵게. 첫 분류(cvo)는 소분류를 붙이지 않는다. 실제 이름은 데이터에서 읽는다 */
+const mailCat = (c, i) => '■ ' + (c.mailName || c.name) + (c.id === 'cvo' ? '' : '(' + (c.id === 'hr' ? '본부 내 ' : '') + c.subs.join('/') + ')');
 /* 첫 분류에서 안건이 없어도 제목 줄을 남기는 소분류: 데이터에 keep이 있으면 그것, 없으면 앞 세 개와 마지막(기타) */
 const keepSubs = c => c.keep || c.subs.slice(0, 3).concat(c.subs.slice(-1));
 const CIRC = '①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭⑮⑯⑰⑱⑲⑳';
@@ -1004,22 +1005,25 @@ function mailText(label){
     + '검토 후 추가 또는 삭제가 필요한 의제가 있으시면, 월요일' + (meet ? '(' + dt(meet).getDate() + '일)' : '') + ' 오전 7시까지 회신 부탁드립니다.\n'
     + '주신 의견을 반영하여 최종 아젠다를 정리하겠습니다. 감사합니다.\n\n\n[취합링크]\n' + (S.set.link || '') + '\n';
   if (S.set.mailMiss !== false && ms.none.length) t += '\n※ 미제출 ' + ms.none.length + '팀 : ' + ms.none.join(', ') + '\n';
+  /* 제목 다음과 소분류 묶음 사이에 빈 줄, 빈 소분류와 빈 분류는 '※ 이번주 이슈 없습니다.' */
+  const NONE = '※ 이번주 이슈 없습니다.';
   S.cats.forEach((c, i) => {
-    t += '\n\n' + mailCat(c, i) + '\n';
+    t += '\n' + mailCat(c, i) + '\n\n';
     const list = ordered(label, c.id, all.filter(x => x.cat === c.id && (ed[x.id] || {}).inc !== false));
     if (c.id === 'cvo'){
       const last = c.subs[c.subs.length - 1];
       c.subs.filter(sb => keepSubs(c).includes(sb) || list.some(x => x.sub === sb)).forEach((sb, j) => {
         const g = list.filter(x => (c.subs.includes(x.sub) ? x.sub : last) === sb);
-        t += (j + 1) + ') ' + sb + '\n';
+        t += (j ? '\n' : '') + (j + 1) + ') ' + sb + '\n';
+        if (!g.length) t += '   ' + NONE + '\n';
         g.forEach((it, k) => { t += '  ' + (CIRC[k] || (k + 1) + ')') + ' ' + mailParts(it).head + who(it) + '\n' + mailBody(it, '   '); });
       });
     } else {
-      if (!list.length) t += ' 없음\n';
+      if (!list.length) t += ' ' + NONE + '\n';
       list.forEach((it, k) => { t += ' ' + (k + 1) + ') ' + mailParts(it).head + who(it) + '\n' + mailBody(it, '  '); });
     }
   });
-  return nbspIndent(t + '\n\n이상입니다.\n\n\n' + SENDER + ' 올림\n');
+  return nbspIndent(t + '\n\n이상입니다.\n\n\n' + SENDER + ' 올림\n');   /* ■ 줄은 발송기가 웍스에서 굵게 바꾼다(M.bold) */
 }
 /* 웍스 편집기는 줄 앞 일반 공백을 합쳐 버린다. 실제 메일처럼 줄 앞 공백을 '줄바꿈 없는 공백, 공백' 번갈아(   …) 바꿔 들여쓰기를 지킨다 */
 const nbspIndent = s => s.split('\n').map(l => l.replace(/^ +/, m => [...m].map((_, i) => i % 2 ? ' ' : ' ').join(''))).join('\n');

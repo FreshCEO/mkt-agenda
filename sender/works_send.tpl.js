@@ -37,6 +37,15 @@ await body.evaluate(b => { const s = b.querySelector('[data-workseditor=sign-con
 await pw.getByRole('button', { name: /^크기/ }).click();
 await pw.getByRole('link', { name: '가나다(14px)', exact: true }).click();
 await sleep(500);
+// M.bold(예: '■')로 시작하는 줄만 하나씩 선택해서 굵게 (편집기 단축키 Ctrl+B)
+const BOLD = M.bold || '';
+const boldIdx = BOLD ? await body.evaluate((b, p) => { const s = b.querySelector('[data-workseditor=sign-content]'); const kids = [...s.parentElement.children]; return kids.slice(0, kids.indexOf(s)).map((k, i) => k.textContent.replace(/[ \s]+/g, ' ').trim().startsWith(p) ? i : -1).filter(i => i >= 0); }, BOLD) : [];
+for (const i of boldIdx) {
+  await body.evaluate((b, i) => { const s = b.querySelector('[data-workseditor=sign-content]'); const k = [...s.parentElement.children][i]; const r = b.ownerDocument.createRange(); r.selectNodeContents(k); const sel = b.ownerDocument.getSelection(); sel.removeAllRanges(); sel.addRange(r); }, i);
+  await pw.keyboard.press('Control+b'); await sleep(150);
+}
+const weights = await body.evaluate((b, idx) => { const s = b.querySelector('[data-workseditor=sign-content]'); const kids = [...s.parentElement.children].slice(0, [...s.parentElement.children].indexOf(s)); const w = k => { const els = [k, ...k.querySelectorAll('*')].filter(e => [...e.childNodes].some(c => c.nodeType === 3 && c.textContent.trim())); return els.length ? Math.min(...els.map(e => +getComputedStyle(e).fontWeight || 400)) : 400; }; return { bold: idx.map(i => w(kids[i])), others: kids.map((k, i) => idx.includes(i) || !k.textContent.trim() ? 0 : w(k)).filter(x => x >= 600).length }; }, boldIdx);
+await body.evaluate(b => b.ownerDocument.getSelection().removeAllRanges());
 // 확인
 const r = await body.evaluate(b => { const sign = b.querySelector('[data-workseditor=sign-content]'); if (!sign) return { err: '서명 없음' }; const kids = [...sign.parentElement.children]; const si = kids.indexOf(sign); const els = kids.slice(0, si).flatMap(k => [k, ...k.querySelectorAll('*')]).filter(e => [...e.childNodes].some(c => c.nodeType === 3 && c.textContent.trim())); return { lines: kids.slice(0, si).map(k => k.textContent), signText: sign.textContent, sizes: [...new Set(els.map(e => getComputedStyle(e).fontSize))], fonts: [...new Set(els.map(e => getComputedStyle(e).fontFamily.split(',')[0]))] }; });
 const clean = a => { a = a.map(x => x.replace(/ /g, ' ').replace(/​/g, '').replace(/\s+$/, '')); while (a.length && !a[a.length - 1]) a.pop(); while (a.length && !a[0]) a.shift(); return a; };
@@ -46,10 +55,10 @@ const snap = await snapshot(pw, { interactive: true });
 const chips = (snap.tree.match(/link "수정"/g) || []).length;
 const subjOK = (await pw.getByRole('textbox', { name: '제목' }).inputValue()) === M.subject;
 const toOK = snap.tree.includes('text: "' + M.to + '"');
-const checks = { 붙여넣기처리: handled, 본문일치: diff < 0, 본문줄: got.length + '/' + exp.length, 서명그대로: r.signText === signBefore, 글자크기14: r.sizes && r.sizes.length === 1 && r.sizes[0] === '14px', 글꼴: r.fonts, 받는사람1명: chips === 1 && toOK, 제목일치: subjOK, 보내는주소: fromNow, 보내는이름: nameNow, 보내는주소일치: !M.from || fromNow === M.from };
+const checks = { 붙여넣기처리: handled, 본문일치: diff < 0, 본문줄: got.length + '/' + exp.length, 서명그대로: r.signText === signBefore, 글자크기14: r.sizes && r.sizes.length === 1 && r.sizes[0] === '14px', 글꼴: r.fonts, 받는사람1명: chips === 1 && toOK, 제목일치: subjOK, 보내는주소: fromNow, 보내는이름: nameNow, 보내는주소일치: !M.from || fromNow === M.from, 굵게: boldIdx.length + '줄', 굵게확인: weights.bold.every(x => x >= 600) && weights.others === 0 };
 console.log(JSON.stringify(checks));
 if (diff >= 0) console.log('첫 차이 줄', diff, JSON.stringify(String(got[diff]).slice(0, 50)), '/', JSON.stringify(String(exp[diff]).slice(0, 50)));
-const pass = handled && diff < 0 && checks.서명그대로 && checks.글자크기14 && checks.받는사람1명 && subjOK && checks.보내는주소일치;
+const pass = handled && diff < 0 && checks.서명그대로 && checks.글자크기14 && checks.받는사람1명 && subjOK && checks.보내는주소일치 && checks.굵게확인;
 if (!pass) { console.log('확인 실패: 보내지 않음'); }
 else if (!SEND) { console.log('확인 통과 (보내지 않는 시험 실행)'); }
 else {

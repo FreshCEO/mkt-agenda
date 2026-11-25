@@ -108,12 +108,12 @@ async def main():
         ck('25 공지 전 점검: 점검 안 마친 사업부 3곳, 미제출 3팀', '점검을 마치지 않은 사업부 3곳' in chk and '1사업부 가 사업부장' in chk and '미제출 3팀' in chk and '마감 후 추가 0팀' in chk, chk[:150])
         await audit('3 최종 공지')
         body = (await ev("mailOf('report')"))['body'].replace(' ', ' '); lines = body.split('\n')   # 들여쓰기는 웍스용 줄바꿈 없는 공백
-        heads = ['1. 중점과제', '2. KPI(제품/매출)', '3. 핵심역량(도입/계약/파트너사)', '4. 인재육성(본부 내 인력 이슈)']
-        ck('26 최종 공지 메일이 열린 채로 나오고 실제 보고 양식(인사, 회신 기한, 취합링크, 분류 제목, 본부미팅알람 올림)', await pg.locator('details.mbox[data-tg=mo_report]').evaluate('e => e.open') and '금 13:00 최종 공지' in await pg.locator('details.mbox[data-tg=mo_report] > summary').inner_text() and lines[0] == '사업부장님, 센터장님 안녕하세요.' and '11월 4주차 본부 미팅 아젠다 취합 내용을 아래와 같이 보고 드립니다.' in lines and any(l.startswith('검토 후 추가 또는 삭제가 필요한 의제가 있으시면, 월요일(23일) 오전 7시까지') for l in lines) and '[취합링크]' in lines and [l for l in lines if l[:2] in ('1.', '2.', '3.', '4.') and not l.startswith(' ')] == heads and body.rstrip().endswith('이상입니다.' + chr(10) * 3 + '본부미팅알람 올림'), [l for l in lines if l[:2] in ('1.', '2.', '3.', '4.')])
+        heads = ['■ 중점과제', '■ KPI(제품/매출)', '■ 핵심역량(도입/계약/파트너사)', '■ 인재육성(본부 내 인력 이슈)']
+        ck('26 최종 공지 메일이 열린 채로 나오고 실제 보고 양식(인사, 회신 기한, 취합링크, 분류 제목, 본부미팅알람 올림)', await pg.locator('details.mbox[data-tg=mo_report]').evaluate('e => e.open') and '금 13:00 최종 공지' in await pg.locator('details.mbox[data-tg=mo_report] > summary').inner_text() and lines[0] == '사업부장님, 센터장님 안녕하세요.' and '11월 4주차 본부 미팅 아젠다 취합 내용을 아래와 같이 보고 드립니다.' in lines and any(l.startswith('검토 후 추가 또는 삭제가 필요한 의제가 있으시면, 월요일(23일) 오전 7시까지') for l in lines) and '[취합링크]' in lines and [l for l in lines if l.startswith('■ ')] == heads and all(lines[i + 1] == '' for i, l in enumerate(lines) if l.startswith('■ ')) and body.rstrip().endswith('이상입니다.' + chr(10) * 3 + '본부미팅알람 올림'), [l for l in lines if l.startswith('■ ')])
         ck('27 한 칸에 적은 내용이 메일에 그대로(N) 제목 / 사업부장, - 내용), 점검에서 뺀 안건은 빠짐', any(re.match(r'^ \d+\) 예시 품목 2 / 가 사업부장$', l) for l in lines) and '  - 예시 품목 2 목표 달성 계획 확정' in lines and '  - 11/20 예시 홍보 예정, 대상은 예시 거래처 전체' in lines and '예시 협력사 11' not in body and any(re.match(r'^\d\) 과제 A$', l) for l in lines) and '※ 미제출 3팀' in body, [l for l in lines if '예시 품목 2' in l or '예시 홍보' in l or '과제 A' in l])
         html = await ev("mailHtml(mailOf('report').body)")
         bold = await pg.locator('#mPv_report div[style*="font-weight:700"]').count()
-        ck('28 서식: 번호 제목, N) 줄, ① 줄은 굵게', 'font-size:12pt;font-weight:700;margin-top:4px">1. 중점과제</div>' in html and any(('font-weight:700">' + x) in html for x in ['1) 과제 A', '2) 과제 A']) and bold >= 20, bold)
+        ck('28 서식: ■ 분류 제목, N) 줄, ① 줄은 굵게', 'font-weight:700">■ 중점과제</div>' in html and any(('font-weight:700">' + x) in html for x in ['1) 과제 A', '2) 과제 A']) and bold >= 20, bold)
         await pg.fill('#mTo_report', 'a@test.example, b@test.example')
         await pg.click('[data-act=send][data-t=report]'); await w(300); href = await ev('window.__href')
         await pg.click('[data-act=mailCopy][data-t=report]'); await w(300)
