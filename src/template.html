@@ -232,6 +232,9 @@ table.st{width:100%;border-collapse:collapse;font-size:14px}
 .log div{padding:6px 0;border-bottom:1px solid var(--line)}
 .log span{color:var(--mute);margin-right:8px;font-variant-numeric:tabular-nums;font-weight:600}
 
+.btn.submit{background:#156b39;border-color:#156b39;color:#fff;font-size:18px;font-weight:800;padding:13px 38px;border-radius:999px;box-shadow:0 4px 12px rgba(21,107,57,.3)}
+.btn.submit:hover{background:#0f5a2f;border-color:#0f5a2f}
+.btn.submit.sm-top{font-size:15px;padding:8px 22px}
 .sync{display:inline-flex;align-items:center;gap:2px;background:#fffaeb;color:#3a2f14;border:1px solid #d9c08a;border-radius:999px;padding:4px 12px;font-size:13px;white-space:nowrap}
 .sync.float{position:fixed;right:14px;bottom:14px;z-index:40;box-shadow:0 4px 14px rgba(70,50,20,.18)}
 .sync-slot{display:inline-flex}
@@ -983,7 +986,7 @@ function mailParts(it){
 /* 실제 보고 메일 양식: 1. 분류 → (CVO) 1) 소분류 → ① 제목 / 사업부장 → - 내용, (그 밖) 1) 제목 / 사업부장 → - 내용
  * 사람이 여러 팀 안건을 묶고 문장을 다듬어 보내므로, 이것은 초안이다. 주인팀장이 화면에서 고친 뒤 보낸다 */
 /* 분류 제목: '1. 이름(소분류/소분류)'. 첫 분류(cvo)는 소분류를 붙이지 않는다. 실제 이름은 데이터에서 읽는다 */
-const mailCat = (c, i) => (i + 1) + '. ' + c.name + (c.id === 'cvo' ? '' : '(' + (c.id === 'hr' ? '본부 내 ' : '') + c.subs.join('/') + ')');
+const mailCat = (c, i) => (i + 1) + '. ' + (c.mailName || c.name) + (c.id === 'cvo' ? '' : '(' + (c.id === 'hr' ? '본부 내 ' : '') + c.subs.join('/') + ')');
 /* 첫 분류에서 안건이 없어도 제목 줄을 남기는 소분류: 데이터에 keep이 있으면 그것, 없으면 앞 세 개와 마지막(기타) */
 const keepSubs = c => c.keep || c.subs.slice(0, 3).concat(c.subs.slice(-1));
 const CIRC = '①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭⑮⑯⑰⑱⑲⑳';
@@ -1014,8 +1017,10 @@ function mailText(label){
       list.forEach((it, k) => { t += ' ' + (k + 1) + ') ' + mailParts(it).head + who(it) + '\n' + mailBody(it, '  '); });
     }
   });
-  return t + '\n\n이상입니다.\n\n\n' + SENDER + ' 올림\n';
+  return nbspIndent(t + '\n\n이상입니다.\n\n\n' + SENDER + ' 올림\n');
 }
+/* 웍스 편집기는 줄 앞 일반 공백을 합쳐 버린다. 실제 메일처럼 줄 앞 공백을 '줄바꿈 없는 공백, 공백' 번갈아(   …) 바꿔 들여쓰기를 지킨다 */
+const nbspIndent = s => s.split('\n').map(l => l.replace(/^ +/, m => [...m].map((_, i) => i % 2 ? ' ' : ' ').join(''))).join('\n');
 /* 본문 글을 서식이 있는 메일 모양으로 바꾼다. 번호 제목과 ■ 줄, CVO의 안건 줄은 굵게 */
 function mailHtml(body){
   let sec = 0;
@@ -1143,7 +1148,7 @@ function vInput(){
   let h = `<div class="row" style="margin-top:30px"><h3 style="font-size:20px">팀장 입력</h3>
     ${isLead() ? `<span class="pill on">${esc(name)}</span>` : `<select data-ch="inTeam" aria-label="팀 고르기">${S.teams.map(t => `<option value="${esc(t.name)}" ${t.name===name?'selected':''}>${esc(t.name)}${a.subs[t.name] ? ' (제출)' : ''}</option>`).join('')}</select>`}
     <span class="state ${sub ? (a.late[name] ? 'late' : 'ok') : 'no'}">${sub ? (a.late[name] ? '마감 후 제출 ' : '제출 완료 ') + esc(sub) : (locked() ? '미제출 확정' : '미제출')}</span>
-    <span class="sp"></span><span class="pill">마감 <b>${fmt(deadline())} ${dlT()}</b></span></div>
+    <span class="sp"></span><button class="btn submit sm-top" data-act="submit" data-t="${esc(name)}">${sub ? '다시 제출' : '제출하기'}</button><span class="pill">마감 <b>${fmt(deadline())} ${dlT()}</b></span></div>
     <p class="lead">지난 주(${esc(prev.label)})에 쓴 내용이 그대로 들어 있습니다. 바뀐 부분만 고치고 제출하세요. 해당 없는 분류는 없음에 체크합니다.${carriedN ? ' 아직 손대지 않은 안건이 ' + carriedN + '건 있습니다.' : ''}</p>`;
   if (lost) h += `<div class="lost"><b>${esc(lost.at)}에 다른 사람이 이 팀을 먼저 저장해서, 내가 쓰던 내용 대신 최신 내용이 들어왔습니다.</b> 내가 쓴 내용은 아래에 남겨 두었습니다. 필요한 부분을 복사해 넣으세요.
     <textarea readonly aria-label="내가 쓴 내용">${esc(lost.text)}</textarea><button class="btn sm" data-act="lostClose" data-t="${esc(name)}">확인, 닫기</button></div>`;
@@ -1164,7 +1169,7 @@ function vInput(){
         <textarea class="one" data-in="detail" data-id="${it.id}" aria-label="${esc(it.title || '안건')} 내용" placeholder="내용을 자유롭게 적습니다">${esc([compose(it), it.detail].filter(Boolean).join('\n'))}</textarea></div>`).join('')}
     </section>`;
   });
-  h += `<div class="row" style="margin-top:18px"><button class="btn pri" data-act="submit" data-t="${esc(name)}">${sub ? '다시 제출' : '제출'}</button>
+  h += `<div class="row" style="margin-top:18px"><button class="btn submit" data-act="submit" data-t="${esc(name)}">${sub ? '다시 제출' : '제출하기'}</button>
     ${sub ? `<button class="btn ghost" data-act="unsubmit" data-t="${esc(name)}">제출 취소</button>` : ''}
     <button class="btn ghost" data-act="recarry" data-t="${esc(name)}">지난 주 내용으로 되돌리기</button><span class="err">${esc(S.ui.err || '')}</span></div>
     ${carriedN && !sub ? `<div class="small mute" style="margin-top:6px">지난 주와 같은 내용 ${carriedN}건이 고치지 않은 채로 제출됩니다. 바뀐 것이 없으면 그대로 제출해도 됩니다.</div>` : ''}`;

@@ -97,7 +97,7 @@ async def main():
         await pg.select_option('[data-ch=role]', 'lead'); await pg.select_option('[data-ch=roleTeam]', '카팀'); await w()
         lr = await pg.locator('.ck .by').all_inner_texts()
         ck('22 팀장 화면: 본인 팀 안건의 포함 여부와 코멘트만, 알람과 설정 없음', len(lr) >= 1 and all('카팀' in x for x in lr) and await pg.locator('.ck.off', has_text='예시 협력사 11').count() == 1 and await pg.locator('.mbox').count() == 0 and await pg.locator('.cks').count() == 0 and await pg.locator('.top .tab').all_inner_texts() == ['이번 주', '히스토리'] and await pg.locator('[data-act=next]').count() == 0)
-        await ph('in'); ck('23 팀장 화면 1단계: 본인 입력만', await pg.locator('.tb').count() == 0 and await pg.locator('[data-act=submit]').count() == 1 and await pg.locator('.draft textarea.one').count() >= 1)
+        await ph('in'); ck('23 팀장 화면 1단계: 본인 입력만 (제출 버튼 위아래 2개)', await pg.locator('.tb').count() == 0 and await pg.locator('[data-act=submit]').count() == 2 and await pg.locator('.draft textarea.one').count() >= 1)
         await audit('1 안건 기입(팀장)')
         await pg.select_option('[data-ch=role]', 'head'); await w()
 
@@ -107,7 +107,7 @@ async def main():
         chk = await pg.locator('.chk').inner_text()
         ck('25 공지 전 점검: 점검 안 마친 사업부 3곳, 미제출 3팀', '점검을 마치지 않은 사업부 3곳' in chk and '1사업부 가 사업부장' in chk and '미제출 3팀' in chk and '마감 후 추가 0팀' in chk, chk[:150])
         await audit('3 최종 공지')
-        body = (await ev("mailOf('report')"))['body']; lines = body.split('\n')
+        body = (await ev("mailOf('report')"))['body'].replace(' ', ' '); lines = body.split('\n')   # 들여쓰기는 웍스용 줄바꿈 없는 공백
         heads = ['1. 중점과제', '2. KPI(제품/매출)', '3. 핵심역량(도입/계약/파트너사)', '4. 인재육성(본부 내 인력 이슈)']
         ck('26 최종 공지 메일이 열린 채로 나오고 실제 보고 양식(인사, 회신 기한, 취합링크, 분류 제목, 본부미팅알람 올림)', await pg.locator('details.mbox[data-tg=mo_report]').evaluate('e => e.open') and '금 13:00 최종 공지' in await pg.locator('details.mbox[data-tg=mo_report] > summary').inner_text() and lines[0] == '사업부장님, 센터장님 안녕하세요.' and '11월 4주차 본부 미팅 아젠다 취합 내용을 아래와 같이 보고 드립니다.' in lines and any(l.startswith('검토 후 추가 또는 삭제가 필요한 의제가 있으시면, 월요일(23일) 오전 7시까지') for l in lines) and '[취합링크]' in lines and [l for l in lines if l[:2] in ('1.', '2.', '3.', '4.') and not l.startswith(' ')] == heads and body.rstrip().endswith('이상입니다.' + chr(10) * 3 + '본부미팅알람 올림'), [l for l in lines if l[:2] in ('1.', '2.', '3.', '4.')])
         ck('27 한 칸에 적은 내용이 메일에 그대로(N) 제목 / 사업부장, - 내용), 점검에서 뺀 안건은 빠짐', any(re.match(r'^ \d+\) 예시 품목 2 / 가 사업부장$', l) for l in lines) and '  - 예시 품목 2 목표 달성 계획 확정' in lines and '  - 11/20 예시 홍보 예정, 대상은 예시 거래처 전체' in lines and '예시 협력사 11' not in body and any(re.match(r'^\d\) 과제 A$', l) for l in lines) and '※ 미제출 3팀' in body, [l for l in lines if '예시 품목 2' in l or '예시 홍보' in l or '과제 A' in l])
